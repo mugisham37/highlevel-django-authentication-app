@@ -1019,3 +1019,346 @@ class ComplianceReportSerializer(serializers.Serializer):
     gdpr_compliant = serializers.BooleanField(read_only=True)
     data_retention_compliant = serializers.BooleanField(read_only=True)
     audit_trail_complete = serializers.BooleanField(read_only=True)
+
+
+class BackupCodesGenerationSerializer(serializers.Serializer):
+    """
+    Serializer for backup codes generation requests.
+    
+    Handles requests to generate new backup codes with optional parameters.
+    """
+    
+    count = serializers.IntegerField(
+        required=False,
+        min_value=5,
+        max_value=20,
+        help_text="Number of backup codes to generate (5-20, defaults to configured value)"
+    )
+    force_regenerate = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Whether to force regeneration even if codes already exist"
+    )
+    
+    def validate_count(self, value: int) -> int:
+        """
+        Validate backup codes count.
+        
+        Args:
+            value: Number of codes to generate
+            
+        Returns:
+            Validated count
+            
+        Raises:
+            ValidationError: If count is invalid
+        """
+        if value is not None and (value < 5 or value > 20):
+            raise ValidationError(_('Backup codes count must be between 5 and 20.'))
+        return value
+
+
+class BackupCodeValidationSerializer(serializers.Serializer):
+    """
+    Serializer for backup code validation requests.
+    
+    Handles backup code validation with proper formatting and security.
+    """
+    
+    backup_code = serializers.CharField(
+        max_length=20,
+        min_length=4,
+        help_text="Backup code to validate"
+    )
+    
+    def validate_backup_code(self, value: str) -> str:
+        """
+        Validate backup code format.
+        
+        Args:
+            value: Backup code to validate
+            
+        Returns:
+            Validated backup code
+            
+        Raises:
+            ValidationError: If backup code format is invalid
+        """
+        if not value:
+            raise ValidationError(_('Backup code is required.'))
+        
+        # Remove whitespace and convert to uppercase
+        cleaned_code = value.replace(' ', '').replace('-', '').upper().strip()
+        
+        if len(cleaned_code) < 4:
+            raise ValidationError(_('Backup code must be at least 4 characters long.'))
+        
+        if len(cleaned_code) > 20:
+            raise ValidationError(_('Backup code must be less than 20 characters long.'))
+        
+        # Check for valid characters (alphanumeric only)
+        if not re.match(r'^[A-Z0-9]+$', cleaned_code):
+            raise ValidationError(_('Backup code can only contain letters and numbers.'))
+        
+        return cleaned_code
+
+
+class BackupCodesRegenerationSerializer(serializers.Serializer):
+    """
+    Serializer for backup codes regeneration requests.
+    
+    Handles requests to regenerate backup codes with reason tracking.
+    """
+    
+    reason = serializers.ChoiceField(
+        choices=[
+            ('user_request', 'User Request'),
+            ('security_incident', 'Security Incident'),
+            ('device_lost', 'Device Lost'),
+            ('codes_compromised', 'Codes Compromised'),
+            ('low_codes_remaining', 'Low Codes Remaining'),
+            ('admin_action', 'Admin Action'),
+        ],
+        required=False,
+        default='user_request',
+        help_text="Reason for regenerating backup codes"
+    )
+    
+    def validate_reason(self, value: str) -> str:
+        """
+        Validate regeneration reason.
+        
+        Args:
+            value: Reason for regeneration
+            
+        Returns:
+            Validated reason
+        """
+        valid_reasons = [
+            'user_request', 'security_incident', 'device_lost',
+            'codes_compromised', 'low_codes_remaining', 'admin_action'
+        ]
+        
+        if value not in valid_reasons:
+            raise ValidationError(_('Invalid reason for backup codes regeneration.'))
+        
+        return value
+
+
+class BackupCodesStatusSerializer(serializers.Serializer):
+    """
+    Serializer for backup codes status information.
+    
+    Used for displaying backup codes status to users.
+    """
+    
+    has_backup_codes = serializers.BooleanField(
+        read_only=True,
+        help_text="Whether user has backup codes configured"
+    )
+    device_id = serializers.UUIDField(
+        read_only=True,
+        allow_null=True,
+        help_text="ID of the backup codes device"
+    )
+    remaining_codes = serializers.IntegerField(
+        read_only=True,
+        help_text="Number of remaining backup codes"
+    )
+    created_at = serializers.DateTimeField(
+        read_only=True,
+        allow_null=True,
+        help_text="When backup codes were created"
+    )
+    last_used = serializers.DateTimeField(
+        read_only=True,
+        allow_null=True,
+        help_text="When backup codes were last used"
+    )
+    usage_count = serializers.IntegerField(
+        read_only=True,
+        help_text="Total number of times backup codes have been used"
+    )
+    status = serializers.CharField(
+        read_only=True,
+        help_text="Status of the backup codes device"
+    )
+    is_confirmed = serializers.BooleanField(
+        read_only=True,
+        help_text="Whether backup codes device is confirmed"
+    )
+    low_codes_warning = serializers.BooleanField(
+        read_only=True,
+        help_text="Whether user should be warned about low backup codes"
+    )
+
+
+class BackupCodesUsageStatisticsSerializer(serializers.Serializer):
+    """
+    Serializer for backup codes usage statistics.
+    
+    Used for displaying usage analytics and monitoring information.
+    """
+    
+    has_backup_codes = serializers.BooleanField(
+        read_only=True,
+        help_text="Whether user has backup codes configured"
+    )
+    device_id = serializers.UUIDField(
+        read_only=True,
+        allow_null=True,
+        help_text="ID of the backup codes device"
+    )
+    statistics = serializers.DictField(
+        read_only=True,
+        allow_null=True,
+        help_text="Usage statistics for the specified period"
+    )
+    
+    class StatisticsSerializer(serializers.Serializer):
+        """Nested serializer for statistics data."""
+        
+        period_days = serializers.IntegerField(
+            read_only=True,
+            help_text="Number of days covered by statistics"
+        )
+        total_attempts = serializers.IntegerField(
+            read_only=True,
+            help_text="Total backup code attempts in period"
+        )
+        successful_attempts = serializers.IntegerField(
+            read_only=True,
+            help_text="Successful backup code attempts in period"
+        )
+        failed_attempts = serializers.IntegerField(
+            read_only=True,
+            help_text="Failed backup code attempts in period"
+        )
+        success_rate = serializers.FloatField(
+            read_only=True,
+            help_text="Success rate percentage"
+        )
+        remaining_codes = serializers.IntegerField(
+            read_only=True,
+            help_text="Current number of remaining codes"
+        )
+        total_usage_count = serializers.IntegerField(
+            read_only=True,
+            help_text="Total usage count across all time"
+        )
+        last_used = serializers.DateTimeField(
+            read_only=True,
+            allow_null=True,
+            help_text="When backup codes were last used"
+        )
+        recent_usage = serializers.ListField(
+            child=serializers.DictField(),
+            read_only=True,
+            help_text="Recent usage history"
+        )
+
+
+class BackupCodesResponseSerializer(serializers.Serializer):
+    """
+    Serializer for backup codes API responses.
+    
+    Standardizes response format for backup codes operations.
+    """
+    
+    success = serializers.BooleanField(
+        read_only=True,
+        help_text="Whether the operation was successful"
+    )
+    message = serializers.CharField(
+        read_only=True,
+        help_text="Human-readable message about the operation"
+    )
+    data = serializers.DictField(
+        read_only=True,
+        allow_null=True,
+        help_text="Operation result data"
+    )
+    error = serializers.DictField(
+        read_only=True,
+        allow_null=True,
+        help_text="Error information if operation failed"
+    )
+
+
+class BackupCodesValidationResponseSerializer(serializers.Serializer):
+    """
+    Serializer for backup code validation responses.
+    
+    Used specifically for backup code validation results.
+    """
+    
+    valid = serializers.BooleanField(
+        read_only=True,
+        help_text="Whether the backup code was valid"
+    )
+    device_id = serializers.UUIDField(
+        read_only=True,
+        help_text="ID of the backup codes device"
+    )
+    remaining_codes = serializers.IntegerField(
+        read_only=True,
+        help_text="Number of remaining backup codes after use"
+    )
+    warning = serializers.CharField(
+        read_only=True,
+        allow_null=True,
+        help_text="Warning message if applicable (e.g., low codes remaining)"
+    )
+    used_at = serializers.DateTimeField(
+        read_only=True,
+        help_text="When the backup code was used"
+    )
+    response_time_ms = serializers.FloatField(
+        read_only=True,
+        help_text="Response time in milliseconds"
+    )
+
+
+class BackupCodesGenerationResponseSerializer(serializers.Serializer):
+    """
+    Serializer for backup codes generation responses.
+    
+    Used specifically for backup codes generation results.
+    """
+    
+    codes = serializers.ListField(
+        child=serializers.CharField(),
+        read_only=True,
+        help_text="Generated backup codes"
+    )
+    device_id = serializers.UUIDField(
+        read_only=True,
+        help_text="ID of the backup codes device"
+    )
+    generated_at = serializers.DateTimeField(
+        read_only=True,
+        help_text="When the codes were generated"
+    )
+    codes_count = serializers.IntegerField(
+        read_only=True,
+        help_text="Number of codes generated"
+    )
+    regenerated = serializers.BooleanField(
+        read_only=True,
+        help_text="Whether this was a regeneration (replacing existing codes)"
+    )
+    warning = serializers.CharField(
+        read_only=True,
+        allow_null=True,
+        help_text="Warning message if applicable"
+    )
+    previous_codes_count = serializers.IntegerField(
+        read_only=True,
+        required=False,
+        help_text="Number of previous codes that were replaced (for regeneration)"
+    )
+    reason = serializers.CharField(
+        read_only=True,
+        required=False,
+        help_text="Reason for regeneration (for regeneration operations)"
+    )

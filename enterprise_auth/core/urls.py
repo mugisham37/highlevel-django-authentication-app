@@ -43,11 +43,17 @@ from .views.mfa_views import (
     disable_mfa_device,
     mfa_status,
 )
+from .views.backup_codes_views import (
+    BackupCodesViewSet,
+    BackupCodeValidationView,
+)
+
 
 app_name = 'core'
 
-# Create router for viewsets (if needed in future)
-# router = DefaultRouter()
+# Create router for viewsets
+router = DefaultRouter()
+router.register(r'mfa/backup-codes', BackupCodesViewSet, basename='backup-codes')
 
 urlpatterns = [
     # Health check endpoints
@@ -97,9 +103,17 @@ urlpatterns = [
     path('mfa/devices/disable/', disable_mfa_device, name='disable_mfa_device'),
     path('mfa/status/', mfa_status, name='mfa_status'),
     
-    # SMS MFA endpoints
-    path('mfa/sms/', include('enterprise_auth.core.urls.sms_mfa_urls')),
+
     
-    # Email MFA endpoints
-    path('mfa/email/', include('enterprise_auth.core.urls.email_mfa_urls')),
+    # SMS MFA endpoints (placeholder - will be implemented in future tasks)
+    # path('mfa/sms/', include('enterprise_auth.core.urls.sms_mfa_urls')),
+    
+    # Email MFA endpoints (placeholder - will be implemented in future tasks)
+    # path('mfa/email/', include('enterprise_auth.core.urls.email_mfa_urls')),
+    
+    # Backup codes standalone validation endpoint
+    path('mfa/validate-backup-code/', BackupCodeValidationView.as_view(), name='validate_backup_code_standalone'),
+    
+    # Include router URLs for viewsets
+    path('', include(router.urls)),
 ]

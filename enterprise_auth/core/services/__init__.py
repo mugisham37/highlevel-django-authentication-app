@@ -50,6 +50,10 @@ from .email_mfa_service import (
     EmailMFAService,
     email_mfa_service,
 )
+from .backup_codes_service import (
+    BackupCodesService,
+    backup_codes_service,
+)
 
 __all__ = [
     'PasswordService',
@@ -92,4 +96,7 @@ __all__ = [
     # Email MFA service
     'EmailMFAService',
     'email_mfa_service',
+    # Backup codes service
+    'BackupCodesService',
+    'backup_codes_service',
 ]

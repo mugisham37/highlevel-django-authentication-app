@@ -439,6 +439,19 @@ MFA_MAX_SMS_PER_WINDOW = config('MFA_MAX_SMS_PER_WINDOW', default=5, cast=int)
 MFA_SMS_RETRY_ATTEMPTS = config('MFA_SMS_RETRY_ATTEMPTS', default=3, cast=int)
 MFA_SMS_RETRY_DELAY_SECONDS = config('MFA_SMS_RETRY_DELAY_SECONDS', default=30, cast=int)
 
+# Email MFA Configuration
+MFA_EMAIL_CODE_LENGTH = config('MFA_EMAIL_CODE_LENGTH', default=6, cast=int)
+MFA_EMAIL_CODE_EXPIRY_MINUTES = config('MFA_EMAIL_CODE_EXPIRY_MINUTES', default=10, cast=int)
+MFA_EMAIL_RATE_LIMIT_WINDOW = config('MFA_EMAIL_RATE_LIMIT_WINDOW', default=3600, cast=int)  # 1 hour
+MFA_MAX_EMAILS_PER_WINDOW = config('MFA_MAX_EMAILS_PER_WINDOW', default=10, cast=int)
+MFA_EMAIL_RETRY_ATTEMPTS = config('MFA_EMAIL_RETRY_ATTEMPTS', default=3, cast=int)
+MFA_EMAIL_RETRY_DELAY_SECONDS = config('MFA_EMAIL_RETRY_DELAY_SECONDS', default=30, cast=int)
+MFA_EMAIL_TEMPLATE_NAME = config('MFA_EMAIL_TEMPLATE_NAME', default='emails/mfa_verification_email.html')
+MFA_EMAIL_SUBJECT_TEMPLATE = config('MFA_EMAIL_SUBJECT_TEMPLATE', default='Your verification code: {code}')
+MFA_EMAIL_USE_HTML = config('MFA_EMAIL_USE_HTML', default=True, cast=bool)
+MFA_EMAIL_ENABLE_SMS_FALLBACK = config('MFA_EMAIL_ENABLE_SMS_FALLBACK', default=True, cast=bool)
+MFA_EMAIL_FALLBACK_THRESHOLD = config('MFA_EMAIL_FALLBACK_THRESHOLD', default=3, cast=int)
+
 # OAuth Configuration
 OAUTH_PROVIDERS = {
     'google': {

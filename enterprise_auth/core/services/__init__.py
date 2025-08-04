@@ -46,6 +46,10 @@ from .sms_mfa_service import (
     SMSMFAService,
     sms_mfa_service,
 )
+from .email_mfa_service import (
+    EmailMFAService,
+    email_mfa_service,
+)
 
 __all__ = [
     'PasswordService',
@@ -85,4 +89,7 @@ __all__ = [
     # SMS MFA service
     'SMSMFAService',
     'sms_mfa_service',
+    # Email MFA service
+    'EmailMFAService',
+    'email_mfa_service',
 ]

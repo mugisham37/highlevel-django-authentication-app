@@ -99,4 +99,7 @@ urlpatterns = [
     
     # SMS MFA endpoints
     path('mfa/sms/', include('enterprise_auth.core.urls.sms_mfa_urls')),
+    
+    # Email MFA endpoints
+    path('mfa/email/', include('enterprise_auth.core.urls.email_mfa_urls')),
 ]

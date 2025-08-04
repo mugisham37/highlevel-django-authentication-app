@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ site_name }} - Email Verification Code</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+
+        .container {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 40px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #2563eb;
+            margin-bottom: 10px;
+        }
+
+        .title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #1f2937;
+            margin-bottom: 20px;
+        }
+
+        .verification-code {
+            background-color: #f3f4f6;
+            border: 2px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            margin: 30px 0;
+        }
+
+        .code {
+            font-size: 32px;
+            font-weight: bold;
+            color: #1f2937;
+            letter-spacing: 4px;
+            font-family: 'Courier New', monospace;
+            margin: 10px 0;
+        }
+
+        .code-label {
+            font-size: 14px;
+            color: #6b7280;
+            margin-bottom: 10px;
+        }
+
+        .expiry-info {
+            font-size: 14px;
+            color: #ef4444;
+            font-weight: 500;
+        }
+
+        .content {
+            margin-bottom: 30px;
+        }
+
+        .security-notice {
+            background-color: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+
+        .security-notice h4 {
+            margin: 0 0 10px 0;
+            color: #92400e;
+            font-size: 16px;
+        }
+
+        .security-notice p {
+            margin: 0;
+            color: #92400e;
+            font-size: 14px;
+        }
+
+        .device-info {
+            background-color: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+
+        .device-info h4 {
+            margin: 0 0 10px 0;
+            color: #374151;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .device-info p {
+            margin: 5px 0;
+            color: #6b7280;
+            font-size: 13px;
+        }
+
+        .footer {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #e5e7eb;
+            text-align: center;
+            color: #6b7280;
+            font-size: 14px;
+        }
+
+        .footer a {
+            color: #2563eb;
+            text-decoration: none;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        .button {
+            display: inline-block;
+            background-color: #2563eb;
+            color: white;
+            padding: 12px 24px;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 500;
+            margin: 10px 0;
+        }
+
+        .button:hover {
+            background-color: #1d4ed8;
+        }
+
+        @media (max-width: 600px) {
+            body {
+                padding: 10px;
+            }
+
+            .container {
+                padding: 20px;
+            }
+
+            .code {
+                font-size: 28px;
+                letter-spacing: 2px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">{{ site_name }}</div>
+            <h1 class="title">Email Verification Code</h1>
+        </div>
+
+        <div class="content">
+            <p>Hello {{ user.first_name|default:user.email }},</p>
+
+            <p>{{ message_intro }}</p>
+
+            <div class="verification-code">
+                <div class="code-label">Your verification code is:</div>
+                <div class="code">{{ verification_code }}</div>
+                <div class="expiry-info">
+                    This code expires in {{ expires_in_minutes }} minutes
+                </div>
+            </div>
+
+            {% if purpose == 'setup' %}
+            <p>You are setting up email-based multi-factor authentication for your account. Once confirmed, this email
+                address will be used to send verification codes when you sign in.</p>
+            {% elif purpose == 'resend' %}
+            <p>This is a new verification code as requested. Your previous code has been invalidated.</p>
+            {% else %}
+            <p>Please enter this code in the verification form to complete your authentication.</p>
+            {% endif %}
+
+            <div class="security-notice">
+                <h4>🔒 Security Notice</h4>
+                <p>
+                    Never share this code with anyone. {{ site_name }} will never ask you for this code via phone,
+                    email, or any other method.
+                    If you didn't request this code, please secure your account immediately.
+                </p>
+            </div>
+
+            {% if device %}
+            <div class="device-info">
+                <h4>Device Information</h4>
+                <p><strong>Device Name:</strong> {{ device.device_name }}</p>
+                <p><strong>Setup Date:</strong> {{ device.created_at|date:"F j, Y g:i A" }}</p>
+                {% if device.last_used %}
+                <p><strong>Last Used:</strong> {{ device.last_used|date:"F j, Y g:i A" }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <p>If you're having trouble with email delivery, you can:</p>
+            <ul>
+                <li>Check your spam/junk folder</li>
+                <li>Add {{ support_email }} to your contacts</li>
+                <li>Request a new code if this one expires</li>
+                {% if purpose != 'setup' %}
+                <li>Use an alternative MFA method if available</li>
+                {% endif %}
+            </ul>
+        </div>
+
+        <div class="footer">
+            <p>
+                This email was sent to {{ user.email }} as part of your {{ site_name }} account security.
+            </p>
+            <p>
+                Need help? Contact us at <a href="mailto:{{ support_email }}">{{ support_email }}</a>
+            </p>
+            <p>
+                <a href="{{ security_url }}">Manage your security settings</a>
+            </p>
+            <p style="margin-top: 20px; font-size: 12px; color: #9ca3af;">
+                {{ site_name }} - Secure Authentication System<br>
+                This is an automated message, please do not reply to this email.
+            </p>
+        </div>
+    </div>
+</body>
+
+</html>

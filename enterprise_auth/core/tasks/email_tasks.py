@@ -357,6 +357,91 @@ def cleanup_unverified_users() -> int:
         return 0
 
 
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def send_mfa_verification_email(
+    self,
+    user_id: str,
+    device_id: str,
+    email_address: str,
+    verification_code: str,
+    purpose: str = 'verification'
+) -> bool:
+    """
+    Send MFA verification email to user.
+    
+    Args:
+        user_id: User's ID
+        device_id: MFA device ID
+        email_address: Email address to send to
+        verification_code: Verification code
+        purpose: Purpose of the email (setup, verification, resend)
+        
+    Returns:
+        True if email was sent successfully, False otherwise
+    """
+    try:
+        # Get user and device
+        user = UserProfile.objects.get(id=user_id)
+        
+        # Import here to avoid circular imports
+        from ..models import MFADevice
+        device = MFADevice.objects.get(id=device_id)
+        
+        # Determine subject and message based on purpose
+        if purpose == 'setup':
+            subject = _('Set up your email authentication')
+            message_intro = _('You are setting up email-based multi-factor authentication.')
+        elif purpose == 'resend':
+            subject = _('Your new verification code')
+            message_intro = _('Here is your new verification code.')
+        else:
+            subject = _('Your verification code')
+            message_intro = _('Please use this code to complete your authentication.')
+        
+        # Prepare email context
+        context = {
+            'user': user,
+            'device': device,
+            'verification_code': verification_code,
+            'purpose': purpose,
+            'message_intro': message_intro,
+            'expires_in_minutes': getattr(settings, 'MFA_EMAIL_CODE_EXPIRY_MINUTES', 10),
+            'site_name': getattr(settings, 'SITE_NAME', 'Enterprise Auth'),
+            'support_email': getattr(settings, 'SUPPORT_EMAIL', settings.DEFAULT_FROM_EMAIL),
+            'security_url': f"{getattr(settings, 'FRONTEND_URL', '')}/security",
+        }
+        
+        # Render email templates
+        html_message = render_to_string('emails/mfa_verification_email.html', context)
+        plain_message = strip_tags(html_message)
+        
+        # Send email
+        send_mail(
+            subject=subject,
+            message=plain_message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[email_address],
+            html_message=html_message,
+            fail_silently=False,
+        )
+        
+        logger.info(f"MFA verification email sent successfully to {email_address} for user {user.email}")
+        return True
+        
+    except UserProfile.DoesNotExist:
+        logger.error(f"User with ID {user_id} not found")
+        return False
+        
+    except Exception as exc:
+        logger.error(f"Failed to send MFA verification email to {email_address}: {exc}")
+        
+        # Retry the task
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+        
+        return False
+
+
 @shared_task
 def send_bulk_notification_email(
     user_ids: list, 

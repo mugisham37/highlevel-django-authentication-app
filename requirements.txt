@@ -8,6 +8,8 @@ python-decouple==3.8
 
 # Database
 psycopg==3.1.12
+psycopg[pool]==3.1.12
+pgbouncer==1.21.0
 
 # Caching and sessions
 redis==5.0.1

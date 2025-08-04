@@ -31,7 +31,7 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
-    'enterprise_auth',  # Main project app for management commands
+    'enterprise_auth.apps.EnterpriseAuthConfig',  # Main project app with proper configuration
     # Additional apps will be added as we create them
 ]
 
@@ -81,9 +81,34 @@ DATABASES = {
         'PORT': config('DB_PORT', default='5432'),
         'OPTIONS': {
             'connect_timeout': 10,
+            'options': '-c default_transaction_isolation=read_committed',
+            'sslmode': config('DB_SSL_MODE', default='prefer'),
+            'application_name': 'enterprise_auth',
         },
+        'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=300, cast=int),  # 5 minutes
+        'CONN_HEALTH_CHECKS': True,
+        'ATOMIC_REQUESTS': True,
     }
 }
+
+# Database router for read/write splitting
+DATABASE_ROUTERS = ['enterprise_auth.core.db.router.DatabaseRouter']
+
+# Connection pooling settings
+DB_POOL_SIZE = config('DB_POOL_SIZE', default=20, cast=int)
+DB_MAX_OVERFLOW = config('DB_MAX_OVERFLOW', default=30, cast=int)
+DB_POOL_TIMEOUT = config('DB_POOL_TIMEOUT', default=30, cast=int)
+DB_POOL_RECYCLE = config('DB_POOL_RECYCLE', default=3600, cast=int)  # 1 hour
+
+# Database optimization settings
+SLOW_QUERY_THRESHOLD = config('SLOW_QUERY_THRESHOLD', default=1.0, cast=float)  # seconds
+DB_QUERY_CACHE_TIMEOUT = config('DB_QUERY_CACHE_TIMEOUT', default=300, cast=int)  # 5 minutes
+DB_HEALTH_CHECK_INTERVAL = config('DB_HEALTH_CHECK_INTERVAL', default=60, cast=int)  # 1 minute
+
+# ORM optimization settings
+DEFAULT_AUTO_FIELD = 'django.db.models.UUIDField'  # Use UUID as default primary key
+USE_TZ = True  # Always use timezone-aware datetimes
+ATOMIC_REQUESTS = True  # Wrap each request in a transaction by default
 
 # Cache configuration
 CACHES = {

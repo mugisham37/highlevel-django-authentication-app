@@ -24,13 +24,11 @@ def health_check(request):
 @never_cache
 @require_http_methods(["GET"])
 def readiness_check(request):
-    """Readiness check endpoint for Kubernetes."""
-    # Check database connectivity
+    """Enhanced readiness check endpoint for Kubernetes."""
     try:
-        from django.db import connection
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT 1")
-        db_status = 'healthy'
+        from enterprise_auth.core.db.monitoring import get_database_health
+        db_health = get_database_health()
+        db_status = db_health['overall_status']
     except Exception:
         db_status = 'unhealthy'
     
@@ -38,8 +36,8 @@ def readiness_check(request):
     try:
         from django.core.cache import cache
         cache.set('health_check', 'test', 1)
-        cache.get('health_check')
-        cache_status = 'healthy'
+        cache_result = cache.get('health_check')
+        cache_status = 'healthy' if cache_result == 'test' else 'unhealthy'
     except Exception:
         cache_status = 'unhealthy'
     
@@ -55,10 +53,34 @@ def readiness_check(request):
     }, status=status_code)
 
 
+@never_cache
+@require_http_methods(["GET"])
+def database_status(request):
+    """Detailed database status endpoint."""
+    try:
+        from enterprise_auth.core.db.monitoring import get_database_health, get_database_performance
+        from django.utils import timezone
+        
+        status = {
+            'timestamp': timezone.now().isoformat(),
+            'health': get_database_health(),
+            'performance': get_database_performance(),
+        }
+        
+        return JsonResponse(status)
+        
+    except Exception as e:
+        return JsonResponse({
+            'error': 'Failed to retrieve database status',
+            'details': str(e)
+        }, status=500)
+
+
 urlpatterns = [
     # Health checks
     path('health/', health_check, name='health_check'),
     path('ready/', readiness_check, name='readiness_check'),
+    path('health/database/', database_status, name='database_status'),
     
     # Admin interface
     path('admin/', admin.site.urls),

@@ -1,1 +1,1 @@
-# Core utilities package
+# Core package for shared utilities and components

@@ -43,19 +43,33 @@ DATABASES = {
 }
 
 # Read replica configuration
-if config('DB_READ_HOST', default=''):
-    DATABASES['read_replica'] = {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME'),
-        'USER': config('DB_READ_USER', default=config('DB_USER')),
-        'PASSWORD': config('DB_READ_PASSWORD', default=config('DB_PASSWORD')),
-        'HOST': config('DB_READ_HOST'),
-        'PORT': config('DB_READ_PORT', default='5432'),
-        'OPTIONS': {
-            'connect_timeout': 10,
-        },
-        'CONN_MAX_AGE': 600,
-    }
+read_replica_hosts = config('DB_READ_HOSTS', default='', cast=lambda v: [s.strip() for s in v.split(',') if s.strip()])
+
+if read_replica_hosts:
+    for i, host in enumerate(read_replica_hosts):
+        replica_name = f'read_replica_{i}' if i > 0 else 'read_replica'
+        DATABASES[replica_name] = {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': config('DB_NAME'),
+            'USER': config('DB_READ_USER', default=config('DB_USER')),
+            'PASSWORD': config('DB_READ_PASSWORD', default=config('DB_PASSWORD')),
+            'HOST': host,
+            'PORT': config('DB_READ_PORT', default='5432'),
+            'OPTIONS': {
+                'connect_timeout': 10,
+                'options': '-c default_transaction_isolation=read_committed -c statement_timeout=30000',
+                'sslmode': config('DB_SSL_MODE', default='require'),
+                'application_name': f'enterprise_auth_replica_{i}',
+            },
+            'CONN_MAX_AGE': 600,
+            'CONN_HEALTH_CHECKS': True,
+            'TEST': {
+                'MIRROR': 'default',  # Use default database for tests
+            },
+        }
+
+# Enhanced database router for multiple read replicas
+DATABASE_ROUTERS = ['enterprise_auth.core.db.router.ReadWriteRouter']
 
 # Cache configuration for production (Redis cluster)
 CACHES = {

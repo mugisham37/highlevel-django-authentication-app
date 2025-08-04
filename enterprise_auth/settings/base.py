@@ -110,7 +110,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.UUIDField'  # Use UUID as default primary
 USE_TZ = True  # Always use timezone-aware datetimes
 ATOMIC_REQUESTS = True  # Wrap each request in a transaction by default
 
-# Cache configuration
+# Enhanced Redis cache configuration with high availability support
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
@@ -119,28 +119,91 @@ CACHES = {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
             'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 100,
+                'retry_on_timeout': True,
+                'health_check_interval': 30,
+                'socket_timeout': 5,
+                'socket_connect_timeout': 5,
+            },
+            'IGNORE_EXCEPTIONS': True,  # Fail gracefully on Redis errors
         },
         'KEY_PREFIX': 'enterprise_auth',
         'TIMEOUT': 300,
+        'VERSION': 1,
     },
     'sessions': {
         'BACKEND': 'django_redis.cache.RedisCache',
         'LOCATION': config('REDIS_SESSION_URL', default='redis://localhost:6379/2'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 50,
+                'retry_on_timeout': True,
+                'health_check_interval': 30,
+                'socket_timeout': 5,
+                'socket_connect_timeout': 5,
+            },
+            'IGNORE_EXCEPTIONS': True,
         },
         'KEY_PREFIX': 'enterprise_auth_session',
+        'TIMEOUT': 3600,
+    },
+    'rate_limit': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': config('REDIS_RATE_LIMIT_URL', default='redis://localhost:6379/3'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 30,
+                'retry_on_timeout': True,
+                'health_check_interval': 30,
+            },
+            'IGNORE_EXCEPTIONS': True,
+        },
+        'KEY_PREFIX': 'enterprise_auth_rate_limit',
+        'TIMEOUT': 3600,
+    },
+    'cache_warming': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': config('REDIS_CACHE_WARMING_URL', default='redis://localhost:6379/4'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 20,
+                'retry_on_timeout': True,
+            },
+            'IGNORE_EXCEPTIONS': True,
+        },
+        'KEY_PREFIX': 'enterprise_auth_warming',
+        'TIMEOUT': 7200,  # 2 hours for warmed cache
     }
 }
 
-# Session configuration
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+# Enhanced session configuration with Redis backend
+SESSION_ENGINE = 'enterprise_auth.core.cache.session_storage'
 SESSION_CACHE_ALIAS = 'sessions'
 SESSION_COOKIE_AGE = config('SESSION_COOKIE_AGE', default=3600, cast=int)  # 1 hour
 SESSION_COOKIE_SECURE = config('SESSION_COOKIE_SECURE', default=False, cast=bool)
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
 SESSION_SAVE_EVERY_REQUEST = True
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+
+# Redis session configuration
+SESSION_REDIS_PREFIX = 'enterprise_auth_session'
+SESSION_REDIS_SERIALIZER = 'enterprise_auth.core.cache.session_storage.SecureSessionSerializer'
+
+# Session security settings
+SESSION_COOKIE_NAME = 'enterprise_auth_sessionid'
+SESSION_COOKIE_DOMAIN = config('SESSION_COOKIE_DOMAIN', default=None)
+SESSION_COOKIE_PATH = '/'
+
+# Advanced session settings
+SESSION_CONCURRENT_LIMIT = config('SESSION_CONCURRENT_LIMIT', default=5, cast=int)
+SESSION_CLEANUP_INTERVAL = config('SESSION_CLEANUP_INTERVAL', default=3600, cast=int)  # 1 hour
+SESSION_METADATA_ENABLED = True
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -239,6 +302,56 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
+
+# Celery Beat Schedule for periodic tasks
+CELERY_BEAT_SCHEDULE = {
+    # Cache warming tasks
+    'warm-user-cache': {
+        'task': 'enterprise_auth.core.tasks.cache_tasks.warm_user_cache',
+        'schedule': 1800.0,  # Every 30 minutes
+        'options': {'queue': 'cache_warming'}
+    },
+    'warm-oauth-providers-cache': {
+        'task': 'enterprise_auth.core.tasks.cache_tasks.warm_oauth_providers_cache',
+        'schedule': 3600.0,  # Every hour
+        'options': {'queue': 'cache_warming'}
+    },
+    'warm-role-permissions-cache': {
+        'task': 'enterprise_auth.core.tasks.cache_tasks.warm_role_permissions_cache',
+        'schedule': 3600.0,  # Every hour
+        'options': {'queue': 'cache_warming'}
+    },
+    
+    # Cache cleanup tasks
+    'cleanup-expired-sessions': {
+        'task': 'enterprise_auth.core.tasks.cache_tasks.cleanup_expired_sessions',
+        'schedule': 3600.0,  # Every hour
+        'options': {'queue': 'maintenance'}
+    },
+    'cleanup-rate-limit-counters': {
+        'task': 'enterprise_auth.core.tasks.cache_tasks.cleanup_rate_limit_counters',
+        'schedule': 7200.0,  # Every 2 hours
+        'options': {'queue': 'maintenance'}
+    },
+    
+    # Comprehensive cache warming (less frequent)
+    'comprehensive-cache-warming': {
+        'task': 'enterprise_auth.core.tasks.cache_tasks.comprehensive_cache_warming',
+        'schedule': 21600.0,  # Every 6 hours
+        'options': {'queue': 'cache_warming'}
+    },
+}
+
+# Celery task routing
+CELERY_TASK_ROUTES = {
+    'enterprise_auth.core.tasks.cache_tasks.*': {'queue': 'cache_warming'},
+    'enterprise_auth.core.tasks.cache_tasks.cleanup_*': {'queue': 'maintenance'},
+}
+
+# Celery worker configuration
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_TASK_ACKS_LATE = True
+CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000
 
 # Email configuration
 EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.console.EmailBackend')

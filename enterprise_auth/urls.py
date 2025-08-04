@@ -85,6 +85,9 @@ urlpatterns = [
     # Admin interface
     path('admin/', admin.site.urls),
     
+    # Core functionality endpoints
+    path('api/v1/core/', include('enterprise_auth.core.urls')),
+    
     # API endpoints (will be added in future tasks)
     # path('api/v1/', include('enterprise_auth.api.urls')),
 ]

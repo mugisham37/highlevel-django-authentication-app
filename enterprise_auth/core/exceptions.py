@@ -397,6 +397,22 @@ class OAuthUserInfoError(OAuthError):
         super().__init__(message, error_code="OAUTH_USER_INFO_ERROR", **kwargs)
 
 
+class OAuthTokenExpiredError(OAuthError):
+    """Exception raised when OAuth access token has expired."""
+    
+    def __init__(
+        self,
+        message: str = "OAuth access token has expired",
+        provider: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_TOKEN_EXPIRED", **kwargs)
+
+
 # Security Exceptions
 class SecurityError(EnterpriseAuthError):
     """Base exception for security-related errors."""

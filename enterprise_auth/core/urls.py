@@ -20,6 +20,15 @@ from .views.auth_views import (
     get_refresh_token_family,
     revoke_refresh_token_family,
 )
+from .views.oauth_views import (
+    list_oauth_providers,
+    initiate_oauth_authorization,
+    handle_oauth_callback,
+    list_user_oauth_identities,
+    link_oauth_identity,
+    unlink_oauth_identity,
+    oauth_provider_health,
+)
 
 app_name = 'core'
 
@@ -50,4 +59,13 @@ urlpatterns = [
     path('auth/check-refresh/', check_token_refresh_needed, name='check_token_refresh_needed'),
     path('auth/token-family/', get_refresh_token_family, name='get_refresh_token_family'),
     path('auth/revoke-family/', revoke_refresh_token_family, name='revoke_refresh_token_family'),
+    
+    # OAuth provider endpoints
+    path('oauth/providers/', list_oauth_providers, name='list_oauth_providers'),
+    path('oauth/<str:provider_name>/authorize/', initiate_oauth_authorization, name='initiate_oauth_authorization'),
+    path('oauth/<str:provider_name>/callback/', handle_oauth_callback, name='handle_oauth_callback'),
+    path('oauth/<str:provider_name>/link/', link_oauth_identity, name='link_oauth_identity'),
+    path('oauth/<str:provider_name>/unlink/', unlink_oauth_identity, name='unlink_oauth_identity'),
+    path('oauth/identities/', list_user_oauth_identities, name='list_user_oauth_identities'),
+    path('oauth/health/', oauth_provider_health, name='oauth_provider_health'),
 ]

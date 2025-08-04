@@ -13,7 +13,8 @@ This module provides comprehensive JWT token management including:
 import uuid
 import secrets
 import hashlib
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass, asdict
 from enum import Enum
@@ -29,6 +30,8 @@ from django.http import HttpRequest
 from ..models.user import UserProfile
 from ..utils.encryption import encryption_service
 from ..utils.request_utils import create_device_fingerprint, get_device_info, get_client_ip
+
+logger = logging.getLogger(__name__)
 
 
 class TokenType(Enum):
@@ -343,16 +346,35 @@ class TokenBlacklistService:
         Returns:
             Number of tokens cleaned up
         """
-        # Redis automatically handles TTL expiration, so this is mainly for logging
-        # In a real implementation, you might want to track cleanup statistics
-        return 0
+        try:
+            # Get all blacklist keys
+            pattern = f'{self.blacklist_prefix}:*'
+            keys = self.cache._cache.get_client().keys(pattern)
+            
+            cleaned_count = 0
+            current_time = timezone.now()
+            
+            for key in keys:
+                blacklist_data = self.cache.get(key.decode())
+                if blacklist_data:
+                    expires_at = datetime.fromisoformat(blacklist_data['expires_at'].replace('Z', '+00:00'))
+                    if current_time >= expires_at:
+                        self.cache.delete(key.decode())
+                        cleaned_count += 1
+            
+            logger.info(f"Cleaned up {cleaned_count} expired blacklisted tokens")
+            return cleaned_count
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up expired tokens: {str(e)}")
+            return 0
     
     def revoke_all_user_tokens(self, user_id: str, reason: str = 'user_revoked') -> bool:
         """
         Revoke all tokens for a specific user.
         
-        This is a placeholder for bulk revocation functionality.
-        In practice, you'd need to track active tokens per user.
+        This method marks all tokens for a user as revoked by setting a global
+        revocation timestamp that is checked during token validation.
         
         Args:
             user_id: User identifier
@@ -361,8 +383,6 @@ class TokenBlacklistService:
         Returns:
             True if successful
         """
-        # This would require additional tracking of active tokens per user
-        # For now, we'll implement this as a marker that can be checked
         try:
             revocation_data = {
                 'user_id': user_id,
@@ -373,8 +393,11 @@ class TokenBlacklistService:
             cache_key = f'jwt_user_revocation:{user_id}'
             # Set with a long TTL (30 days) to cover refresh token lifetime
             self.cache.set(cache_key, revocation_data, 30 * 24 * 3600)
+            
+            logger.info(f"Revoked all tokens for user {user_id} with reason: {reason}")
             return True
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to revoke all tokens for user {user_id}: {str(e)}")
             return False
     
     def is_user_tokens_revoked(self, user_id: str, issued_at: datetime) -> bool:
@@ -390,6 +413,111 @@ class TokenBlacklistService:
         """
         try:
             cache_key = f'jwt_user_revocation:{user_id}'
+            revocation_data = self.cache.get(cache_key)
+            
+            if not revocation_data:
+                return False
+            
+            revoked_at = datetime.fromisoformat(revocation_data['revoked_at'].replace('Z', '+00:00'))
+            return issued_at < revoked_at
+        except Exception:
+            return False
+    
+    def bulk_blacklist_tokens(self, token_ids: list, expires_at: datetime, reason: str = 'bulk_revoked') -> int:
+        """
+        Blacklist multiple tokens at once.
+        
+        Args:
+            token_ids: List of token identifiers to blacklist
+            expires_at: When the tokens expire
+            reason: Reason for blacklisting
+            
+        Returns:
+            Number of tokens successfully blacklisted
+        """
+        try:
+            blacklisted_count = 0
+            current_time = timezone.now()
+            
+            # Calculate TTL based on token expiration
+            ttl = int((expires_at - current_time).total_seconds())
+            if ttl <= 0:
+                return 0
+            
+            blacklist_data_template = {
+                'blacklisted_at': current_time.isoformat(),
+                'expires_at': expires_at.isoformat(),
+                'reason': reason,
+            }
+            
+            # Use pipeline for efficient bulk operations
+            if hasattr(self.cache._cache, 'get_client'):
+                client = self.cache._cache.get_client()
+                pipe = client.pipeline()
+                
+                for token_id in token_ids:
+                    blacklist_data = blacklist_data_template.copy()
+                    blacklist_data['token_id'] = token_id
+                    
+                    cache_key = f'{self.blacklist_prefix}:{token_id}'
+                    pipe.setex(cache_key, ttl, str(blacklist_data))
+                
+                pipe.execute()
+                blacklisted_count = len(token_ids)
+            else:
+                # Fallback to individual operations
+                for token_id in token_ids:
+                    if self.blacklist_token(token_id, expires_at, reason):
+                        blacklisted_count += 1
+            
+            logger.info(f"Bulk blacklisted {blacklisted_count} tokens with reason: {reason}")
+            return blacklisted_count
+            
+        except Exception as e:
+            logger.error(f"Error in bulk blacklist operation: {str(e)}")
+            return 0
+    
+    def revoke_device_tokens(self, device_id: str, reason: str = 'device_revoked') -> bool:
+        """
+        Revoke all tokens for a specific device.
+        
+        Args:
+            device_id: Device identifier
+            reason: Reason for revocation
+            
+        Returns:
+            True if successful
+        """
+        try:
+            revocation_data = {
+                'device_id': device_id,
+                'revoked_at': timezone.now().isoformat(),
+                'reason': reason,
+            }
+            
+            cache_key = f'jwt_device_revocation:{device_id}'
+            # Set with a long TTL (30 days) to cover refresh token lifetime
+            self.cache.set(cache_key, revocation_data, 30 * 24 * 3600)
+            
+            logger.info(f"Revoked all tokens for device {device_id} with reason: {reason}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to revoke device tokens for {device_id}: {str(e)}")
+            return False
+    
+    def is_device_tokens_revoked(self, device_id: str, issued_at: datetime) -> bool:
+        """
+        Check if device tokens issued before a certain time are revoked.
+        
+        Args:
+            device_id: Device identifier
+            issued_at: When the token was issued
+            
+        Returns:
+            True if tokens are revoked
+        """
+        try:
+            cache_key = f'jwt_device_revocation:{device_id}'
             revocation_data = self.cache.get(cache_key)
             
             if not revocation_data:
@@ -493,6 +621,17 @@ class JWTService:
         # Store refresh token metadata for rotation tracking
         self._store_refresh_token_metadata(refresh_token_id, user.id, device_info.device_id, refresh_expires_at)
         
+        # Create RefreshToken database record for family tracking
+        self._create_refresh_token_record(
+            token_id=refresh_token_id,
+            user=user,
+            device_info=device_info,
+            scopes=scopes,
+            session_id=session_id,
+            issued_at=now,
+            expires_at=refresh_expires_at
+        )
+        
         return TokenPair(
             access_token=access_token,
             refresh_token=refresh_token,
@@ -536,11 +675,18 @@ class JWTService:
                 )
             
             # Check if user tokens are globally revoked
-            issued_at = datetime.fromtimestamp(claims.issued_at, tz=timezone.utc)
+            issued_at = datetime.fromtimestamp(claims.issued_at, tz=dt_timezone.utc)
             if self.blacklist_service.is_user_tokens_revoked(claims.user_id, issued_at):
                 return TokenValidationResult(
                     status=TokenStatus.REVOKED,
                     error_message="User tokens have been revoked"
+                )
+            
+            # Check if device tokens are revoked
+            if self.blacklist_service.is_device_tokens_revoked(claims.device_id, issued_at):
+                return TokenValidationResult(
+                    status=TokenStatus.REVOKED,
+                    error_message="Device tokens have been revoked"
                 )
             
             # Check device binding if provided
@@ -552,7 +698,7 @@ class JWTService:
             
             # Check expiration
             now = timezone.now()
-            expires_at = datetime.fromtimestamp(claims.expires_at, tz=timezone.utc)
+            expires_at = datetime.fromtimestamp(claims.expires_at, tz=dt_timezone.utc)
             if now >= expires_at:
                 return TokenValidationResult(
                     status=TokenStatus.EXPIRED,
@@ -582,7 +728,14 @@ class JWTService:
     
     def refresh_token_pair(self, refresh_token: str, device_info: DeviceInfo) -> Optional[TokenPair]:
         """
-        Refresh an access token using a refresh token.
+        Refresh an access token using a refresh token with rotation and family tracking.
+        
+        This method implements refresh token rotation to prevent replay attacks:
+        1. Validates the refresh token
+        2. Checks for suspicious activity (replay attempts)
+        3. Creates a new token pair
+        4. Rotates the refresh token (marks old as rotated, creates new)
+        5. Updates the token family chain for security tracking
         
         Args:
             refresh_token: Valid refresh token
@@ -591,6 +744,8 @@ class JWTService:
         Returns:
             New TokenPair or None if refresh failed
         """
+        from ..models.jwt import RefreshToken
+        
         try:
             # Validate refresh token
             validation_result = self._validate_refresh_token(refresh_token, device_info.device_fingerprint)
@@ -606,9 +761,29 @@ class JWTService:
             except UserProfile.DoesNotExist:
                 return None
             
-            # Blacklist the old refresh token (rotation)
-            expires_at = datetime.fromtimestamp(claims.expires_at, tz=timezone.utc)
-            self.blacklist_service.blacklist_token(claims.token_id, expires_at, 'rotated')
+            # Get the refresh token record from database for family tracking
+            try:
+                refresh_token_record = RefreshToken.objects.get(
+                    token_id=claims.token_id,
+                    status='active'
+                )
+            except RefreshToken.DoesNotExist:
+                # Token not found in database - possible replay attack
+                logger.warning(f"Refresh token not found in database: {claims.token_id[:8]}... for user {user.email}")
+                self._handle_suspicious_refresh_activity(user, claims, device_info, 'token_not_found')
+                return None
+            
+            # Check for replay attack detection
+            if self._detect_refresh_token_replay(refresh_token_record, device_info):
+                logger.warning(f"Potential refresh token replay attack detected for user {user.email}")
+                self._handle_suspicious_refresh_activity(user, claims, device_info, 'replay_attack')
+                return None
+            
+            # Check rotation limits to prevent abuse
+            if refresh_token_record.rotation_count >= 100:  # Configurable limit
+                logger.warning(f"Refresh token rotation limit exceeded for user {user.email}")
+                self._handle_suspicious_refresh_activity(user, claims, device_info, 'rotation_limit_exceeded')
+                return None
             
             # Generate new token pair
             new_token_pair = self.generate_token_pair(
@@ -618,9 +793,39 @@ class JWTService:
                 session_id=claims.session_id
             )
             
+            # Decode new refresh token to get its token_id
+            new_refresh_claims = self._decode_jwt_token(new_token_pair.refresh_token)
+            if not new_refresh_claims:
+                return None
+            
+            # Rotate the refresh token in database (creates new record and marks old as rotated)
+            new_refresh_token_record = refresh_token_record.rotate(
+                new_token_id=new_refresh_claims.token_id,
+                new_expires_at=new_token_pair.refresh_token_expires_at
+            )
+            
+            # Update the new refresh token record with current device info
+            new_refresh_token_record.device_type = device_info.device_type
+            new_refresh_token_record.browser = device_info.browser
+            new_refresh_token_record.operating_system = device_info.operating_system
+            new_refresh_token_record.ip_address = device_info.ip_address
+            new_refresh_token_record.user_agent = device_info.user_agent
+            new_refresh_token_record.save(update_fields=[
+                'device_type', 'browser', 'operating_system', 'ip_address', 'user_agent'
+            ])
+            
+            # Blacklist the old refresh token in Redis for immediate effect
+            expires_at = datetime.fromtimestamp(claims.expires_at, tz=dt_timezone.utc)
+            self.blacklist_service.blacklist_token(claims.token_id, expires_at, 'rotated')
+            
+            # Log successful token rotation
+            logger.info(f"Token rotation successful for user {user.email}, device: {device_info.device_id}, "
+                       f"rotation count: {new_refresh_token_record.rotation_count}")
+            
             return new_token_pair
             
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error during token refresh: {str(e)}")
             return None
     
     def revoke_token(self, token: str, reason: str = 'user_revoked') -> bool:
@@ -639,7 +844,7 @@ class JWTService:
             if not claims:
                 return False
             
-            expires_at = datetime.fromtimestamp(claims.expires_at, tz=timezone.utc)
+            expires_at = datetime.fromtimestamp(claims.expires_at, tz=dt_timezone.utc)
             return self.blacklist_service.blacklist_token(claims.token_id, expires_at, reason)
             
         except Exception:
@@ -657,6 +862,49 @@ class JWTService:
             True if successful
         """
         return self.blacklist_service.revoke_all_user_tokens(user_id, reason)
+    
+    def revoke_device_tokens(self, device_id: str, reason: str = 'device_compromised') -> bool:
+        """
+        Revoke all tokens for a specific device.
+        
+        Args:
+            device_id: Device identifier
+            reason: Reason for revocation
+            
+        Returns:
+            True if successful
+        """
+        return self.blacklist_service.revoke_device_tokens(device_id, reason)
+    
+    def bulk_revoke_tokens(self, token_ids: list, reason: str = 'bulk_security_incident') -> int:
+        """
+        Revoke multiple tokens at once.
+        
+        Args:
+            token_ids: List of token identifiers to revoke
+            reason: Reason for revocation
+            
+        Returns:
+            Number of tokens successfully revoked
+        """
+        try:
+            # For bulk revocation, we need to determine expiration times
+            # Since we don't have them readily available, we'll use a default long TTL
+            default_expires_at = timezone.now() + timedelta(days=30)
+            
+            return self.blacklist_service.bulk_blacklist_tokens(token_ids, default_expires_at, reason)
+        except Exception as e:
+            logger.error(f"Bulk token revocation failed: {str(e)}")
+            return 0
+    
+    def cleanup_expired_blacklist_entries(self) -> int:
+        """
+        Clean up expired blacklisted tokens.
+        
+        Returns:
+            Number of entries cleaned up
+        """
+        return self.blacklist_service.cleanup_expired_tokens()
     
     def introspect_token(self, token: str) -> Dict[str, Any]:
         """
@@ -731,6 +979,7 @@ class JWTService:
             key_id = unverified_header.get('kid')
             
             if not key_id:
+                logger.error("No key ID found in token header")
                 return None
             
             # Get public key for verification
@@ -752,10 +1001,15 @@ class JWTService:
                 }
             )
             
-            # Convert to TokenClaims
-            return TokenClaims.from_dict(payload)
+            # Filter out standard JWT claims and convert to TokenClaims
+            # Remove standard JWT claims that are not part of our TokenClaims
+            filtered_payload = {k: v for k, v in payload.items() 
+                              if k not in ['iss', 'aud', 'iat', 'exp', 'jti']}
             
-        except Exception:
+            return TokenClaims.from_dict(filtered_payload)
+            
+        except Exception as e:
+            logger.error(f"Token decoding failed: {str(e)}")
             return None
     
     def _validate_refresh_token(self, token: str, device_fingerprint: Optional[str] = None) -> TokenValidationResult:
@@ -783,6 +1037,21 @@ class JWTService:
                     error_message="Token has been revoked"
                 )
             
+            # Check if user tokens are globally revoked
+            issued_at = datetime.fromtimestamp(claims.issued_at, tz=dt_timezone.utc)
+            if self.blacklist_service.is_user_tokens_revoked(claims.user_id, issued_at):
+                return TokenValidationResult(
+                    status=TokenStatus.REVOKED,
+                    error_message="User tokens have been revoked"
+                )
+            
+            # Check if device tokens are revoked
+            if self.blacklist_service.is_device_tokens_revoked(claims.device_id, issued_at):
+                return TokenValidationResult(
+                    status=TokenStatus.REVOKED,
+                    error_message="Device tokens have been revoked"
+                )
+            
             # Check device binding if provided
             if device_fingerprint and claims.device_fingerprint != device_fingerprint:
                 return TokenValidationResult(
@@ -792,7 +1061,7 @@ class JWTService:
             
             # Check expiration
             now = timezone.now()
-            expires_at = datetime.fromtimestamp(claims.expires_at, tz=timezone.utc)
+            expires_at = datetime.fromtimestamp(claims.expires_at, tz=dt_timezone.utc)
             if now >= expires_at:
                 return TokenValidationResult(
                     status=TokenStatus.EXPIRED,
@@ -836,6 +1105,306 @@ class JWTService:
         if ttl > 0:
             cache_key = f'jwt_refresh_metadata:{token_id}'
             self.cache.set(cache_key, metadata, ttl)
+    
+    def _detect_refresh_token_replay(self, refresh_token_record, device_info: DeviceInfo) -> bool:
+        """
+        Detect potential refresh token replay attacks.
+        
+        This method checks for suspicious patterns that might indicate
+        a refresh token is being replayed by an attacker.
+        
+        Args:
+            refresh_token_record: RefreshToken database record
+            device_info: Current device information
+            
+        Returns:
+            True if replay attack is suspected
+        """
+        try:
+            # Check if device fingerprint has changed significantly
+            if (refresh_token_record.device_fingerprint and 
+                refresh_token_record.device_fingerprint != device_info.device_fingerprint):
+                return True
+            
+            # Check if IP address has changed to a different geographic region
+            # (This would require a GeoIP service - simplified check for now)
+            if (refresh_token_record.ip_address and 
+                refresh_token_record.ip_address != device_info.ip_address):
+                # For now, just log the IP change - in production, you'd use GeoIP
+                logger.info(f"IP address changed for refresh token {refresh_token_record.token_id[:8]}... "
+                           f"from {refresh_token_record.ip_address} to {device_info.ip_address}")
+            
+            # Check if user agent has changed significantly
+            if (refresh_token_record.user_agent and 
+                refresh_token_record.user_agent != device_info.user_agent):
+                # Allow minor version changes but flag major changes
+                if not self._is_user_agent_similar(refresh_token_record.user_agent, device_info.user_agent):
+                    return True
+            
+            # Check for rapid successive refresh attempts (potential brute force)
+            cache_key = f'refresh_attempts:{refresh_token_record.user.id}:{device_info.device_id}'
+            attempts = self.cache.get(cache_key, 0)
+            if attempts > 5:  # More than 5 refresh attempts in the time window
+                return True
+            
+            # Increment attempt counter
+            self.cache.set(cache_key, attempts + 1, 300)  # 5-minute window
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error detecting refresh token replay: {str(e)}")
+            return False
+    
+    def _is_user_agent_similar(self, old_ua: str, new_ua: str) -> bool:
+        """
+        Check if two user agent strings are similar enough to be from the same client.
+        
+        This allows for minor version updates while flagging major changes.
+        """
+        try:
+            # Extract browser and OS information
+            old_parts = old_ua.lower().split()
+            new_parts = new_ua.lower().split()
+            
+            # Check if the main browser identifier is present in both
+            browsers = ['chrome', 'firefox', 'safari', 'edge', 'opera']
+            old_browser = None
+            new_browser = None
+            
+            for browser in browsers:
+                if any(browser in part for part in old_parts):
+                    old_browser = browser
+                if any(browser in part for part in new_parts):
+                    new_browser = browser
+            
+            # If browsers match, consider them similar
+            return old_browser == new_browser and old_browser is not None
+            
+        except Exception:
+            # If parsing fails, be conservative and flag as different
+            return False
+    
+    def _handle_suspicious_refresh_activity(self, user, claims: TokenClaims, device_info: DeviceInfo, reason: str) -> None:
+        """
+        Handle suspicious refresh token activity.
+        
+        This method is called when potential security issues are detected
+        during refresh token operations.
+        
+        Args:
+            user: User associated with the suspicious activity
+            claims: Token claims from the suspicious token
+            device_info: Device information from the request
+            reason: Reason for flagging as suspicious
+        """
+        from ..models.jwt import RefreshToken, TokenBlacklist
+        
+        try:
+            # Log the security event
+            logger.warning(f"Suspicious refresh token activity detected for user {user.email}: {reason}")
+            
+            # Revoke all refresh tokens for this user as a security measure
+            if reason in ['replay_attack', 'token_not_found']:
+                # Get all active refresh tokens for the user
+                active_tokens = RefreshToken.objects.filter(
+                    user=user,
+                    status='active'
+                )
+                
+                # Revoke all active refresh tokens
+                for token in active_tokens:
+                    token.revoke(reason=f'security_incident_{reason}')
+                    
+                    # Also blacklist in Redis
+                    self.blacklist_service.blacklist_token(
+                        token.token_id, 
+                        token.expires_at, 
+                        f'security_incident_{reason}'
+                    )
+                
+                # Create blacklist entries for audit trail
+                for token in active_tokens:
+                    TokenBlacklist.objects.create(
+                        token_id=token.token_id,
+                        token_type='refresh',
+                        user=user,
+                        issued_at=token.issued_at,
+                        expires_at=token.expires_at,
+                        reason='security_incident',
+                        reason_details=f'Suspicious activity: {reason}',
+                        device_id=device_info.device_id,
+                        ip_address=device_info.ip_address
+                    )
+                
+                logger.info(f"Revoked {active_tokens.count()} refresh tokens for user {user.email} due to {reason}")
+            
+            # Create a security event record (if you have a security events model)
+            # This would integrate with your security monitoring system
+            self._create_security_event(user, 'suspicious_refresh_activity', {
+                'reason': reason,
+                'token_id': claims.token_id[:8] + '...',
+                'device_id': device_info.device_id,
+                'ip_address': device_info.ip_address,
+                'user_agent': device_info.user_agent[:100],  # Truncate for storage
+            })
+            
+        except Exception as e:
+            logger.error(f"Error handling suspicious refresh activity: {str(e)}")
+    
+    def _create_security_event(self, user, event_type: str, event_data: dict) -> None:
+        """
+        Create a security event record for monitoring and alerting.
+        
+        This method would integrate with your security monitoring system.
+        For now, it logs the event and stores it in cache for immediate access.
+        """
+        try:
+            security_event = {
+                'user_id': str(user.id),
+                'user_email': user.email,
+                'event_type': event_type,
+                'event_data': event_data,
+                'timestamp': timezone.now().isoformat(),
+                'severity': 'high' if 'replay_attack' in event_data.get('reason', '') else 'medium'
+            }
+            
+            # Store in cache for immediate access by monitoring systems
+            cache_key = f'security_event:{uuid.uuid4()}'
+            self.cache.set(cache_key, security_event, 3600)  # 1 hour TTL
+            
+            # Log for immediate visibility
+            logger.warning(f"Security event created: {event_type} for user {user.email}")
+            
+        except Exception as e:
+            logger.error(f"Error creating security event: {str(e)}")
+    
+    def revoke_refresh_token_family(self, token_id: str, reason: str = 'security_incident') -> int:
+        """
+        Revoke an entire refresh token family (all tokens in the rotation chain).
+        
+        This method is used when a security incident is detected and all
+        tokens in a rotation chain need to be revoked.
+        
+        Args:
+            token_id: Any token ID in the family chain
+            reason: Reason for revocation
+            
+        Returns:
+            Number of tokens revoked
+        """
+        from ..models.jwt import RefreshToken
+        
+        try:
+            # Find the token record
+            try:
+                token_record = RefreshToken.objects.get(token_id=token_id)
+            except RefreshToken.DoesNotExist:
+                return 0
+            
+            # Get the full rotation chain
+            token_family = token_record.get_rotation_chain()
+            
+            revoked_count = 0
+            for token in token_family:
+                if token.status == 'active':
+                    # Revoke in database
+                    token.revoke(reason=reason)
+                    
+                    # Blacklist in Redis
+                    self.blacklist_service.blacklist_token(
+                        token.token_id,
+                        token.expires_at,
+                        reason
+                    )
+                    
+                    revoked_count += 1
+            
+            logger.info(f"Revoked {revoked_count} tokens in family for token {token_id[:8]}...")
+            return revoked_count
+            
+        except Exception as e:
+            logger.error(f"Error revoking token family: {str(e)}")
+            return 0
+    
+    def _create_refresh_token_record(
+        self, 
+        token_id: str, 
+        user, 
+        device_info: DeviceInfo, 
+        scopes: List[str], 
+        session_id: Optional[str],
+        issued_at: datetime,
+        expires_at: datetime
+    ) -> None:
+        """
+        Create a RefreshToken database record for family tracking.
+        
+        Args:
+            token_id: Unique token identifier
+            user: User the token belongs to
+            device_info: Device information
+            scopes: Token scopes
+            session_id: Optional session identifier
+            issued_at: When the token was issued
+            expires_at: When the token expires
+        """
+        from ..models.jwt import RefreshToken
+        
+        try:
+            RefreshToken.objects.create(
+                token_id=token_id,
+                user=user,
+                device_id=device_info.device_id,
+                device_fingerprint=device_info.device_fingerprint,
+                device_type=device_info.device_type,
+                browser=device_info.browser,
+                operating_system=device_info.operating_system,
+                ip_address=device_info.ip_address,
+                user_agent=device_info.user_agent,
+                scopes=scopes,
+                session_id=session_id,
+                issued_at=issued_at,
+                expires_at=expires_at,
+                status='active'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error creating refresh token record: {str(e)}")
+    
+    def get_refresh_token_family_info(self, token_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get information about a refresh token family.
+        
+        Args:
+            token_id: Any token ID in the family
+            
+        Returns:
+            Dictionary with family information or None if not found
+        """
+        from ..models.jwt import RefreshToken
+        
+        try:
+            token_record = RefreshToken.objects.get(token_id=token_id)
+            family_chain = token_record.get_rotation_chain()
+            
+            return {
+                'family_size': len(family_chain),
+                'root_token_id': family_chain[0].token_id if family_chain else None,
+                'current_token_id': token_record.token_id,
+                'rotation_count': token_record.rotation_count,
+                'active_tokens': len([t for t in family_chain if t.status == 'active']),
+                'revoked_tokens': len([t for t in family_chain if t.status == 'revoked']),
+                'rotated_tokens': len([t for t in family_chain if t.status == 'rotated']),
+                'created_at': family_chain[0].created_at if family_chain else None,
+                'last_rotation': max([t.created_at for t in family_chain]) if family_chain else None,
+            }
+            
+        except RefreshToken.DoesNotExist:
+            return None
+        except Exception as e:
+            logger.error(f"Error getting token family info: {str(e)}")
+            return None
 
 
 # Global JWT service instance

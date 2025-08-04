@@ -378,3 +378,214 @@ def user_profile(request: Request) -> Response:
             {'error': 'Internal server error'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def revoke_token(request: Request) -> Response:
+    """
+    Revoke a specific JWT token.
+    
+    This endpoint allows revoking a specific token by its token string.
+    Useful for security incidents or when a token is compromised.
+    
+    Request Body:
+        token (str): JWT token to revoke
+        reason (str, optional): Reason for revocation
+        
+    Returns:
+        200: Token revoked successfully
+        400: Invalid request data
+        401: Invalid token or insufficient permissions
+    """
+    try:
+        # Extract token and reason
+        token_to_revoke = request.data.get('token')
+        reason = request.data.get('reason', 'manual_revocation')
+        
+        if not token_to_revoke:
+            return Response(
+                {'error': 'Token is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Revoke the token
+        success = jwt_service.revoke_token(token_to_revoke, reason)
+        
+        if not success:
+            return Response(
+                {'error': 'Failed to revoke token'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Log the revocation
+        logger.info(f"Token revoked by user {request.user.email} with reason: {reason}")
+        
+        return Response(
+            {'message': 'Token revoked successfully'},
+            status=status.HTTP_200_OK
+        )
+        
+    except Exception as e:
+        logger.error(f"Token revocation error: {str(e)}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def revoke_all_user_tokens(request: Request) -> Response:
+    """
+    Revoke all tokens for the current user.
+    
+    This endpoint revokes all tokens for the authenticated user.
+    Useful for security incidents or when changing passwords.
+    
+    Request Body:
+        reason (str, optional): Reason for revocation
+        
+    Returns:
+        200: All tokens revoked successfully
+        401: Invalid token
+    """
+    try:
+        reason = request.data.get('reason', 'user_requested_revocation')
+        
+        # Revoke all tokens for the user
+        success = jwt_service.revoke_all_user_tokens(
+            user_id=str(request.user.id),
+            reason=reason
+        )
+        
+        if not success:
+            return Response(
+                {'error': 'Failed to revoke all tokens'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Log the revocation
+        logger.info(f"All tokens revoked for user {request.user.email} with reason: {reason}")
+        
+        return Response(
+            {'message': 'All tokens revoked successfully'},
+            status=status.HTTP_200_OK
+        )
+        
+    except Exception as e:
+        logger.error(f"All tokens revocation error: {str(e)}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def revoke_device_tokens(request: Request) -> Response:
+    """
+    Revoke all tokens for a specific device.
+    
+    This endpoint revokes all tokens for a specific device.
+    Useful when a device is lost or compromised.
+    
+    Request Body:
+        device_id (str): Device identifier to revoke tokens for
+        reason (str, optional): Reason for revocation
+        
+    Returns:
+        200: Device tokens revoked successfully
+        400: Invalid request data
+        401: Invalid token
+    """
+    try:
+        device_id = request.data.get('device_id')
+        reason = request.data.get('reason', 'device_compromised')
+        
+        if not device_id:
+            return Response(
+                {'error': 'Device ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Revoke all tokens for the device
+        success = jwt_service.revoke_device_tokens(device_id, reason)
+        
+        if not success:
+            return Response(
+                {'error': 'Failed to revoke device tokens'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
+        # Log the revocation
+        logger.info(f"Device tokens revoked by user {request.user.email} for device {device_id} with reason: {reason}")
+        
+        return Response(
+            {'message': 'Device tokens revoked successfully'},
+            status=status.HTTP_200_OK
+        )
+        
+    except Exception as e:
+        logger.error(f"Device tokens revocation error: {str(e)}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def bulk_revoke_tokens(request: Request) -> Response:
+    """
+    Revoke multiple tokens at once.
+    
+    This endpoint allows bulk revocation of multiple tokens.
+    Useful for security incidents affecting multiple tokens.
+    
+    Request Body:
+        token_ids (list): List of token identifiers to revoke
+        reason (str, optional): Reason for revocation
+        
+    Returns:
+        200: Tokens revoked successfully with count
+        400: Invalid request data
+        401: Invalid token
+    """
+    try:
+        token_ids = request.data.get('token_ids', [])
+        reason = request.data.get('reason', 'bulk_security_incident')
+        
+        if not token_ids or not isinstance(token_ids, list):
+            return Response(
+                {'error': 'Token IDs list is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if len(token_ids) > 1000:  # Limit bulk operations
+            return Response(
+                {'error': 'Maximum 1000 tokens can be revoked at once'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Bulk revoke tokens
+        revoked_count = jwt_service.bulk_revoke_tokens(token_ids, reason)
+        
+        # Log the bulk revocation
+        logger.info(f"Bulk revocation by user {request.user.email}: {revoked_count}/{len(token_ids)} tokens revoked with reason: {reason}")
+        
+        return Response(
+            {
+                'message': 'Bulk revocation completed',
+                'revoked_count': revoked_count,
+                'total_requested': len(token_ids)
+            },
+            status=status.HTTP_200_OK
+        )
+        
+    except Exception as e:
+        logger.error(f"Bulk token revocation error: {str(e)}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

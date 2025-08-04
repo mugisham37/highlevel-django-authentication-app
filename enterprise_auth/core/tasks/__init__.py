@@ -1,1 +1,9 @@
 # Core tasks package
+
+from .jwt_tasks import (
+    cleanup_expired_blacklisted_tokens,
+    cleanup_old_refresh_tokens,
+    security_incident_token_revocation,
+    generate_token_blacklist_report,
+    monitor_token_usage_patterns,
+)

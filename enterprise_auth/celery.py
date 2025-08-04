@@ -32,6 +32,25 @@ app.conf.beat_schedule = {
         'task': 'enterprise_auth.security.tasks.analyze_security_events',
         'schedule': 900.0,  # Run every 15 minutes
     },
+    # JWT token management tasks
+    'cleanup-expired-blacklisted-tokens': {
+        'task': 'enterprise_auth.core.tasks.jwt_tasks.cleanup_expired_blacklisted_tokens',
+        'schedule': 300.0,  # Run every 5 minutes
+    },
+    'cleanup-old-refresh-tokens': {
+        'task': 'enterprise_auth.core.tasks.jwt_tasks.cleanup_old_refresh_tokens',
+        'schedule': 86400.0,  # Run daily
+        'kwargs': {'days_old': 60},
+    },
+    'monitor-token-usage-patterns': {
+        'task': 'enterprise_auth.core.tasks.jwt_tasks.monitor_token_usage_patterns',
+        'schedule': 3600.0,  # Run every hour
+    },
+    'generate-token-blacklist-report': {
+        'task': 'enterprise_auth.core.tasks.jwt_tasks.generate_token_blacklist_report',
+        'schedule': 604800.0,  # Run weekly
+        'kwargs': {'days_back': 7},
+    },
 }
 
 app.conf.timezone = settings.TIME_ZONE

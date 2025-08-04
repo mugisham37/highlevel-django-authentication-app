@@ -1,1011 +1,380 @@
 """
-Authentication views for enterprise authentication system.
+Authentication API views for JWT token management.
 
-This module contains API views for user registration, email verification,
-and profile management with comprehensive validation and security features.
+This module provides API endpoints for JWT token generation,
+refresh, validation, and revocation.
 """
 
+import logging
 from typing import Dict, Any
 
-from django.conf import settings
-from django.contrib.auth import get_user_model
+from django.contrib.auth import authenticate
 from django.utils.translation import gettext_lazy as _
-from rest_framework import status, permissions
-from rest_framework.decorators import action
+from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
-from rest_framework.views import APIView
-from rest_framework.viewsets import GenericViewSet
-from rest_framework.mixins import CreateModelMixin, RetrieveModelMixin, UpdateModelMixin
 
-from ..models import UserProfile, UserIdentity
-from ..serializers import (
-    UserRegistrationSerializer,
-    UserProfileSerializer,
-    UserIdentitySerializer,
-    EmailVerificationSerializer,
-    ResendVerificationSerializer,
-    PasswordResetRequestSerializer,
-    PasswordResetConfirmSerializer,
-    PasswordStrengthCheckSerializer,
-)
-from ..services.audit_service import audit_service
+from ..authentication import JWTAuthentication, JWTRefreshAuthentication
+from ..services.jwt_service import jwt_service, DeviceInfo
 from ..utils.request_utils import extract_request_info
 
-User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
-class UserRegistrationView(APIView):
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def login(request: Request) -> Response:
     """
-    API view for user registration with comprehensive validation.
+    Authenticate user and return JWT token pair.
     
-    Handles user registration with email verification workflow,
-    enterprise profile information, and security features.
+    This endpoint validates user credentials and returns access and refresh tokens
+    with device binding for enhanced security.
+    
+    Request Body:
+        email (str): User's email address
+        password (str): User's password
+        
+    Returns:
+        200: JWT token pair with user information
+        400: Invalid request data
+        401: Invalid credentials
     """
-    
-    permission_classes = [permissions.AllowAny]
-    
-    def post(self, request: Request) -> Response:
-        """
-        Register a new user account.
+    try:
+        # Extract credentials
+        email = request.data.get('email')
+        password = request.data.get('password')
         
-        Args:
-            request: HTTP request with registration data
-            
-        Returns:
-            Response with registration status and user information
-        """
-        serializer = UserRegistrationSerializer(data=request.data)
-        
-        if serializer.is_valid():
-            try:
-                # Create user with verification workflow
-                user = serializer.save()
-                
-                # Prepare response data
-                response_data = {
-                    'message': _('Registration successful. Please check your email for verification instructions.'),
-                    'user': {
-                        'id': user.id,
-                        'email': user.email,
-                        'full_name': user.get_full_name(),
-                        'is_email_verified': user.is_email_verified,
-                        'has_enterprise_profile': user.has_enterprise_profile,
-                    },
-                    'next_steps': [
-                        _('Check your email for a verification link'),
-                        _('Click the verification link to activate your account'),
-                        _('Complete your profile setup if needed'),
-                    ]
-                }
-                
-                return Response(
-                    response_data,
-                    status=status.HTTP_201_CREATED
-                )
-                
-            except Exception as e:
-                return Response(
-                    {
-                        'error': _('Registration failed. Please try again.'),
-                        'details': str(e) if settings.DEBUG else None
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-        
-        return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-class EmailVerificationView(APIView):
-    """
-    API view for email verification.
-    
-    Handles email verification using tokens sent to users.
-    """
-    
-    permission_classes = [permissions.AllowAny]
-    
-    def post(self, request: Request) -> Response:
-        """
-        Verify user email address.
-        
-        Args:
-            request: HTTP request with verification data
-            
-        Returns:
-            Response with verification status
-        """
-        from ..services.email_verification_service import EmailVerificationService
-        from ..exceptions import TokenInvalidError, TokenExpiredError
-        
-        serializer = EmailVerificationSerializer(data=request.data)
-        
-        if serializer.is_valid():
-            user_id = serializer.validated_data['user_id']
-            token = serializer.validated_data['token']
-            
-            email_service = EmailVerificationService()
-            
-            try:
-                result = email_service.verify_email(str(user_id), token)
-                
-                return Response(
-                    {
-                        'message': result['message'],
-                        'status': result['status'],
-                        'user_id': result['user_id'],
-                        'verified_at': result.get('verified_at')
-                    },
-                    status=status.HTTP_200_OK
-                )
-                
-            except (TokenInvalidError, TokenExpiredError) as e:
-                return Response(
-                    {
-                        'error': str(e),
-                        'status': 'invalid_token'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-                
-            except Exception as e:
-                return Response(
-                    {
-                        'error': _('Unable to verify email. Please try again later.'),
-                        'details': str(e) if settings.DEBUG else None
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-        
-        return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-class ResendVerificationView(APIView):
-    """
-    API view for resending email verification.
-    
-    Handles resending verification emails with rate limiting.
-    """
-    
-    permission_classes = [permissions.AllowAny]
-    
-    def post(self, request: Request) -> Response:
-        """
-        Resend email verification.
-        
-        Args:
-            request: HTTP request with email address
-            
-        Returns:
-            Response with resend status
-        """
-        from ..services.email_verification_service import EmailVerificationService
-        from ..exceptions import RateLimitExceededError
-        
-        serializer = ResendVerificationSerializer(data=request.data)
-        
-        if serializer.is_valid():
-            email = serializer.validated_data['email']
-            email_service = EmailVerificationService()
-            
-            try:
-                result = email_service.resend_verification_email(email)
-                
-                response_status = status.HTTP_200_OK
-                if not result['success'] and result.get('status') == 'rate_limited':
-                    response_status = status.HTTP_429_TOO_MANY_REQUESTS
-                
-                return Response(
-                    {
-                        'message': result['message'],
-                        'status': result['status'],
-                        'email_sent': result.get('email_sent', False),
-                        'expires_at': result.get('expires_at'),
-                        'retry_after_minutes': result.get('retry_after_minutes')
-                    },
-                    status=response_status
-                )
-                
-            except Exception as e:
-                return Response(
-                    {
-                        'error': _('Unable to send verification email. Please try again later.'),
-                        'details': str(e) if settings.DEBUG else None
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-        
-        return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-class UserProfileViewSet(GenericViewSet, RetrieveModelMixin, UpdateModelMixin):
-    """
-    ViewSet for user profile management.
-    
-    Provides endpoints for retrieving and updating user profile information.
-    """
-    
-    serializer_class = UserProfileSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get_object(self):
-        """
-        Return the current user's profile.
-        
-        Returns:
-            Current user's UserProfile instance
-        """
-        return self.request.user
-    
-    @action(detail=False, methods=['get', 'put', 'patch'])
-    def me(self, request: Request) -> Response:
-        """
-        Get or update current user's profile.
-        
-        Args:
-            request: HTTP request
-            
-        Returns:
-            Response with user profile data
-        """
-        if request.method == 'GET':
-            serializer = self.get_serializer(request.user)
-            
-            # Log profile view for audit compliance
-            try:
-                request_info = extract_request_info(request)
-                audit_service.log_profile_view(
-                    user=request.user,
-                    request_info=request_info,
-                )
-            except Exception as e:
-                # Don't fail the request if audit logging fails
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Failed to log profile view: {str(e)}")
-            
-            return Response(serializer.data)
-        
-        elif request.method in ['PUT', 'PATCH']:
-            partial = request.method == 'PATCH'
-            
-            # Capture old values for audit logging
-            old_values = {}
-            for field in request.data.keys():
-                if hasattr(request.user, field):
-                    old_values[field] = getattr(request.user, field)
-            
-            serializer = self.get_serializer(
-                request.user, 
-                data=request.data, 
-                partial=partial
-            )
-            
-            if serializer.is_valid():
-                # Save the updated instance
-                updated_instance = serializer.save()
-                
-                # Capture new values for audit logging
-                new_values = {}
-                for field in request.data.keys():
-                    if hasattr(updated_instance, field):
-                        new_values[field] = getattr(updated_instance, field)
-                
-                # Log profile update for audit compliance
-                try:
-                    request_info = extract_request_info(request)
-                    audit_service.log_profile_update(
-                        user=updated_instance,
-                        old_values=old_values,
-                        new_values=new_values,
-                        request_info=request_info,
-                    )
-                except Exception as e:
-                    # Don't fail the request if audit logging fails
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.error(f"Failed to log profile update: {str(e)}")
-                
-                return Response(
-                    {
-                        'message': _('Profile updated successfully.'),
-                        'user': serializer.data
-                    },
-                    status=status.HTTP_200_OK
-                )
-            
+        if not email or not password:
             return Response(
-                serializer.errors,
+                {'error': 'Email and password are required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-    
-    def retrieve(self, request: Request, *args, **kwargs) -> Response:
-        """
-        Retrieve current user's profile.
         
-        Args:
-            request: HTTP request
-            
-        Returns:
-            Response with user profile data
-        """
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        
-        # Log profile view for audit compliance
-        try:
-            request_info = extract_request_info(request)
-            audit_service.log_profile_view(
-                user=instance,
-                request_info=request_info,
-            )
-        except Exception as e:
-            # Don't fail the request if audit logging fails
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.error(f"Failed to log profile view: {str(e)}")
-        
-        return Response(serializer.data)
-    
-    def update(self, request: Request, *args, **kwargs) -> Response:
-        """
-        Update current user's profile.
-        
-        Args:
-            request: HTTP request with profile data
-            
-        Returns:
-            Response with updated profile data
-        """
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        
-        # Capture old values for audit logging
-        old_values = {}
-        for field in request.data.keys():
-            if hasattr(instance, field):
-                old_values[field] = getattr(instance, field)
-        
-        serializer = self.get_serializer(instance, data=request.data, partial=partial)
-        
-        if serializer.is_valid():
-            # Save the updated instance
-            updated_instance = serializer.save()
-            
-            # Capture new values for audit logging
-            new_values = {}
-            for field in request.data.keys():
-                if hasattr(updated_instance, field):
-                    new_values[field] = getattr(updated_instance, field)
-            
-            # Log profile update for audit compliance
-            try:
-                request_info = extract_request_info(request)
-                audit_service.log_profile_update(
-                    user=updated_instance,
-                    old_values=old_values,
-                    new_values=new_values,
-                    request_info=request_info,
-                )
-            except Exception as e:
-                # Don't fail the request if audit logging fails
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.error(f"Failed to log profile update: {str(e)}")
-            
+        # Authenticate user
+        user = authenticate(request, username=email, password=password)
+        if not user:
+            logger.warning(f"Failed login attempt for email: {email}")
             return Response(
-                {
-                    'message': _('Profile updated successfully.'),
-                    'user': serializer.data
-                },
-                status=status.HTTP_200_OK
+                {'error': 'Invalid credentials'},
+                status=status.HTTP_401_UNAUTHORIZED
             )
         
-        return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    def partial_update(self, request: Request, *args, **kwargs) -> Response:
-        """
-        Partially update current user's profile.
-        
-        Args:
-            request: HTTP request with partial profile data
-            
-        Returns:
-            Response with updated profile data
-        """
-        kwargs['partial'] = True
-        return self.update(request, *args, **kwargs)
-    
-    @action(detail=False, methods=['get'])
-    def identities(self, request: Request) -> Response:
-        """
-        Get user's linked social identities.
-        
-        Args:
-            request: HTTP request
-            
-        Returns:
-            Response with linked identities
-        """
-        identities = UserIdentity.objects.get_user_identities(request.user)
-        serializer = UserIdentitySerializer(identities, many=True)
-        
-        return Response(
-            {
-                'identities': serializer.data,
-                'count': identities.count()
-            },
-            status=status.HTTP_200_OK
-        )
-    
-    @action(detail=False, methods=['get'])
-    def audit_logs(self, request: Request) -> Response:
-        """
-        Get user's audit logs for transparency and compliance.
-        
-        Args:
-            request: HTTP request
-            
-        Returns:
-            Response with audit logs
-        """
-        from ..serializers import AuditLogSerializer
-        
-        # Get query parameters
-        event_types = request.query_params.getlist('event_type')
-        limit = min(int(request.query_params.get('limit', 50)), 100)  # Max 100
-        
-        # Get audit logs
-        audit_logs = audit_service.get_user_audit_logs(
-            user=request.user,
-            event_types=event_types if event_types else None,
-            limit=limit,
-        )
-        
-        serializer = AuditLogSerializer(audit_logs, many=True)
-        
-        return Response(
-            {
-                'audit_logs': serializer.data,
-                'count': len(audit_logs),
-                'available_event_types': [
-                    'profile_update',
-                    'profile_view',
-                    'password_change',
-                    'email_verification',
-                    'login',
-                    'logout',
-                    'mfa_setup',
-                    'oauth_link',
-                    'data_export',
-                ]
-            },
-            status=status.HTTP_200_OK
-        )
-    
-    @action(detail=False, methods=['get'])
-    def profile_changes(self, request: Request) -> Response:
-        """
-        Get user's profile change history.
-        
-        Args:
-            request: HTTP request
-            
-        Returns:
-            Response with profile change history
-        """
-        from ..serializers import ProfileChangeHistorySerializer
-        
-        # Get query parameters
-        field_name = request.query_params.get('field_name')
-        limit = min(int(request.query_params.get('limit', 50)), 100)  # Max 100
-        
-        # Get profile changes
-        profile_changes = audit_service.get_profile_change_history(
-            user=request.user,
-            field_name=field_name,
-            limit=limit,
-        )
-        
-        serializer = ProfileChangeHistorySerializer(profile_changes, many=True)
-        
-        return Response(
-            {
-                'profile_changes': serializer.data,
-                'count': len(profile_changes),
-            },
-            status=status.HTTP_200_OK
-        )
-    
-    @action(detail=False, methods=['post'])
-    def export_data(self, request: Request) -> Response:
-        """
-        Export user's data for GDPR compliance.
-        
-        Args:
-            request: HTTP request
-            
-        Returns:
-            Response with exported data
-        """
-        try:
-            # Export user's audit data
-            export_data = audit_service.export_user_audit_data(
-                user=request.user,
-                include_sensitive=False,  # Don't include sensitive logs by default
-            )
-            
-            # Add profile data
-            profile_serializer = self.get_serializer(request.user)
-            export_data['profile_data'] = profile_serializer.data
-            
-            # Add identities data
-            identities = UserIdentity.objects.get_user_identities(request.user)
-            identities_serializer = UserIdentitySerializer(identities, many=True)
-            export_data['identities_data'] = identities_serializer.data
-            
+        # Check if user is active
+        if not user.is_active:
             return Response(
-                {
-                    'message': _('Data export completed successfully.'),
-                    'export_data': export_data,
-                },
-                status=status.HTTP_200_OK
+                {'error': 'Account is disabled'},
+                status=status.HTTP_401_UNAUTHORIZED
             )
-            
-        except Exception as e:
+        
+        # Check if account is locked
+        if hasattr(user, 'is_account_locked') and user.is_account_locked:
             return Response(
-                {
-                    'error': _('Failed to export data. Please try again later.'),
-                    'details': str(e) if settings.DEBUG else None
-                },
+                {'error': 'Account is temporarily locked'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Create device info from request
+        device_info = DeviceInfo.from_request(request)
+        
+        # Generate JWT token pair
+        token_pair = jwt_service.generate_token_pair(
+            user=user,
+            device_info=device_info,
+            scopes=['read', 'write']
+        )
+        
+        # Update user login metadata
+        request_info = extract_request_info(request)
+        user.update_login_metadata(
+            ip_address=request_info['ip_address'],
+            user_agent=request_info['user_agent']
+        )
+        
+        # Log successful login
+        logger.info(f"Successful login for user: {user.email}")
+        
+        # Prepare response
+        response_data = {
+            'user': {
+                'id': str(user.id),
+                'email': user.email,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'is_email_verified': user.is_email_verified,
+            },
+            'tokens': token_pair.to_dict(),
+            'device_info': {
+                'device_id': device_info.device_id,
+                'device_type': device_info.device_type,
+                'browser': device_info.browser,
+                'operating_system': device_info.operating_system,
+            }
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Login error: {str(e)}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def refresh_token(request: Request) -> Response:
+    """
+    Refresh JWT access token using refresh token.
+    
+    This endpoint validates a refresh token and returns a new token pair
+    with token rotation for enhanced security.
+    
+    Request Body:
+        refresh_token (str): Valid refresh token
+        
+    Returns:
+        200: New JWT token pair
+        400: Invalid request data
+        401: Invalid or expired refresh token
+    """
+    try:
+        # Extract refresh token
+        refresh_token_str = request.data.get('refresh_token')
+        
+        if not refresh_token_str:
+            return Response(
+                {'error': 'Refresh token is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create device info from request
+        device_info = DeviceInfo.from_request(request)
+        
+        # Refresh token pair
+        new_token_pair = jwt_service.refresh_token_pair(
+            refresh_token=refresh_token_str,
+            device_info=device_info
+        )
+        
+        if not new_token_pair:
+            return Response(
+                {'error': 'Invalid or expired refresh token'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        # Log successful token refresh
+        logger.info(f"Token refresh successful for device: {device_info.device_id}")
+        
+        # Prepare response
+        response_data = {
+            'tokens': new_token_pair.to_dict(),
+            'device_info': {
+                'device_id': device_info.device_id,
+                'device_type': device_info.device_type,
+                'browser': device_info.browser,
+                'operating_system': device_info.operating_system,
+            }
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Token refresh error: {str(e)}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def logout(request: Request) -> Response:
+    """
+    Logout user and revoke current token.
+    
+    This endpoint revokes the current access token and optionally
+    revokes all tokens for the user.
+    
+    Request Body:
+        revoke_all (bool, optional): Whether to revoke all user tokens
+        
+    Returns:
+        200: Logout successful
+        401: Invalid token
+    """
+    try:
+        # Get token from request
+        auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+        if not auth_header.startswith('Bearer '):
+            return Response(
+                {'error': 'Invalid authorization header'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        token = auth_header.split(' ')[1]
+        revoke_all = request.data.get('revoke_all', False)
+        
+        if revoke_all:
+            # Revoke all tokens for the user
+            success = jwt_service.revoke_all_user_tokens(
+                user_id=str(request.user.id),
+                reason='user_logout_all'
+            )
+        else:
+            # Revoke only the current token
+            success = jwt_service.revoke_token(token, reason='user_logout')
+        
+        if not success:
+            return Response(
+                {'error': 'Failed to revoke token'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-    
-    @action(detail=False, methods=['post'])
-    def change_password(self, request: Request) -> Response:
-        """
-        Change user's password.
         
-        Args:
-            request: HTTP request with password data
-            
-        Returns:
-            Response with password change status
-        """
-        from ..serializers import PasswordChangeSerializer
-        from ..services.password_service import PasswordService
-        from ..exceptions import (
-            InvalidCredentialsError,
-            AccountLockedError,
-            PasswordPolicyError
-        )
-        
-        serializer = PasswordChangeSerializer(
-            data=request.data,
-            context={'request': request}
-        )
-        
-        if serializer.is_valid():
-            current_password = serializer.validated_data['current_password']
-            new_password = serializer.validated_data['new_password']
-            password_service = PasswordService()
-            
-            try:
-                result = password_service.change_password(
-                    user=request.user,
-                    current_password=current_password,
-                    new_password=new_password
-                )
-                
-                return Response(
-                    {
-                        'message': result['message'],
-                        'status': 'changed',
-                        'strength_score': result['strength_score'],
-                        'changed_at': result['changed_at']
-                    },
-                    status=status.HTTP_200_OK
-                )
-                
-            except InvalidCredentialsError as e:
-                return Response(
-                    {
-                        'error': str(e),
-                        'status': 'invalid_credentials'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-                
-            except AccountLockedError as e:
-                return Response(
-                    {
-                        'error': str(e),
-                        'status': 'account_locked',
-                        'locked_until': e.details.get('locked_until')
-                    },
-                    status=status.HTTP_423_LOCKED
-                )
-                
-            except PasswordPolicyError as e:
-                return Response(
-                    {
-                        'error': str(e),
-                        'validation_errors': e.details.get('validation_errors', []),
-                        'status': 'policy_violation'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-                
-            except Exception as e:
-                return Response(
-                    {
-                        'error': _('Unable to change password. Please try again later.'),
-                        'details': str(e) if settings.DEBUG else None
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
+        # Log successful logout
+        logger.info(f"Logout successful for user: {request.user.email}")
         
         return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST
+            {'message': 'Logout successful'},
+            status=status.HTTP_200_OK
         )
-
-
-class PasswordResetRequestView(APIView):
-    """
-    API view for password reset request.
-    
-    Handles password reset initiation with secure token generation.
-    """
-    
-    permission_classes = [permissions.AllowAny]
-    
-    def post(self, request: Request) -> Response:
-        """
-        Initiate password reset workflow.
         
-        Args:
-            request: HTTP request with email address
-            
-        Returns:
-            Response with reset initiation status
-        """
-        from ..serializers import PasswordResetRequestSerializer
-        from ..services.password_service import PasswordService
-        
-        serializer = PasswordResetRequestSerializer(data=request.data)
-        
-        if serializer.is_valid():
-            email = serializer.validated_data['email']
-            password_service = PasswordService()
-            
-            try:
-                result = password_service.initiate_password_reset(email)
-                
-                return Response(
-                    {
-                        'message': result['message'],
-                        'status': 'initiated' if result['success'] else 'failed'
-                    },
-                    status=status.HTTP_200_OK if result['success'] else status.HTTP_429_TOO_MANY_REQUESTS
-                )
-                
-            except Exception as e:
-                return Response(
-                    {
-                        'error': _('Unable to process password reset request. Please try again later.'),
-                        'details': str(e) if settings.DEBUG else None
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-        
+    except Exception as e:
+        logger.error(f"Logout error: {str(e)}")
         return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
-class PasswordResetConfirmView(APIView):
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def introspect_token(request: Request) -> Response:
     """
-    API view for password reset confirmation.
+    Introspect JWT token and return metadata.
     
-    Handles password reset completion with token validation.
+    This endpoint validates a token and returns its metadata
+    without requiring authentication.
+    
+    Request Body:
+        token (str): JWT token to introspect
+        
+    Returns:
+        200: Token metadata
+        400: Invalid request data
     """
-    
-    permission_classes = [permissions.AllowAny]
-    
-    def post(self, request: Request) -> Response:
-        """
-        Complete password reset workflow.
-        
-        Args:
-            request: HTTP request with token and new password
-            
-        Returns:
-            Response with reset completion status
-        """
-        from ..serializers import PasswordResetConfirmSerializer
-        from ..services.password_service import PasswordService
-        from ..exceptions import (
-            TokenInvalidError, 
-            TokenExpiredError, 
-            PasswordPolicyError
-        )
-        
-        serializer = PasswordResetConfirmSerializer(data=request.data)
-        
-        if serializer.is_valid():
-            token = serializer.validated_data['token']
-            new_password = serializer.validated_data['new_password']
-            password_service = PasswordService()
-            
-            try:
-                result = password_service.reset_password(token, new_password)
-                
-                return Response(
-                    {
-                        'message': result['message'],
-                        'status': 'completed',
-                        'strength_score': result['strength_score']
-                    },
-                    status=status.HTTP_200_OK
-                )
-                
-            except (TokenInvalidError, TokenExpiredError) as e:
-                return Response(
-                    {
-                        'error': str(e),
-                        'status': 'invalid_token'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-                
-            except PasswordPolicyError as e:
-                return Response(
-                    {
-                        'error': str(e),
-                        'validation_errors': e.details.get('validation_errors', []),
-                        'status': 'policy_violation'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-                
-            except Exception as e:
-                return Response(
-                    {
-                        'error': _('Unable to reset password. Please try again later.'),
-                        'details': str(e) if settings.DEBUG else None
-                    },
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-        
-        return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST
-        )
-
-
-class PasswordResetValidateTokenView(APIView):
-    """
-    API view for password reset token validation.
-    
-    Validates reset tokens without consuming them.
-    """
-    
-    permission_classes = [permissions.AllowAny]
-    
-    def post(self, request: Request) -> Response:
-        """
-        Validate password reset token.
-        
-        Args:
-            request: HTTP request with token
-            
-        Returns:
-            Response with token validation status
-        """
-        from ..services.password_service import PasswordService
-        
+    try:
+        # Extract token
         token = request.data.get('token')
+        
         if not token:
             return Response(
-                {
-                    'error': _('Token is required'),
-                    'valid': False
-                },
+                {'error': 'Token is required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        password_service = PasswordService()
-        result = password_service.validate_reset_token(token)
+        # Introspect token
+        introspection_data = jwt_service.introspect_token(token)
         
+        return Response(introspection_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Token introspection error: {str(e)}")
         return Response(
-            result,
-            status=status.HTTP_200_OK if result['valid'] else status.HTTP_400_BAD_REQUEST
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
-class PasswordStrengthCheckView(APIView):
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def validate_token(request: Request) -> Response:
     """
-    API view for password strength checking.
+    Validate current JWT token.
     
-    Provides real-time password strength feedback.
+    This endpoint validates the current token and returns user information.
+    It's useful for client applications to verify token validity.
+    
+    Returns:
+        200: Token is valid with user information
+        401: Invalid token
     """
-    
-    permission_classes = [permissions.AllowAny]
-    
-    def post(self, request: Request) -> Response:
-        """
-        Check password strength.
+    try:
+        # Token is already validated by authentication middleware
+        # Return user information and token claims
+        token_claims = getattr(request, 'auth', None)
         
-        Args:
-            request: HTTP request with password
-            
-        Returns:
-            Response with strength analysis
-        """
-        from ..serializers import PasswordStrengthCheckSerializer
-        from ..services.password_service import PasswordService
+        response_data = {
+            'valid': True,
+            'user': {
+                'id': str(request.user.id),
+                'email': request.user.email,
+                'first_name': request.user.first_name,
+                'last_name': request.user.last_name,
+                'is_email_verified': request.user.is_email_verified,
+            }
+        }
         
-        serializer = PasswordStrengthCheckSerializer(data=request.data)
+        if token_claims:
+            response_data['token_info'] = {
+                'token_id': token_claims.token_id,
+                'device_id': token_claims.device_id,
+                'scopes': token_claims.scopes,
+                'issued_at': token_claims.issued_at,
+                'expires_at': token_claims.expires_at,
+            }
         
-        if serializer.is_valid():
-            password = serializer.validated_data['password']
-            password_service = PasswordService()
-            
-            # Get user context if authenticated
-            user = request.user if request.user.is_authenticated else None
-            
-            result = password_service.check_password_strength(password, user)
-            
-            return Response(result, status=status.HTTP_200_OK)
+        return Response(response_data, status=status.HTTP_200_OK)
         
+    except Exception as e:
+        logger.error(f"Token validation error: {str(e)}")
         return Response(
-            serializer.errors,
-            status=status.HTTP_400_BAD_REQUEST
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
 
 
-class PasswordPolicyView(APIView):
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def user_profile(request: Request) -> Response:
     """
-    API view for password policy information.
+    Get current user profile information.
     
-    Provides current password policy requirements.
+    This endpoint returns detailed profile information for the
+    authenticated user.
+    
+    Returns:
+        200: User profile information
+        401: Invalid token
     """
-    
-    permission_classes = [permissions.AllowAny]
-    
-    def get(self, request: Request) -> Response:
-        """
-        Get password policy information.
+    try:
+        user = request.user
         
-        Args:
-            request: HTTP request
-            
-        Returns:
-            Response with policy information
-        """
-        from ..services.password_service import PasswordService
+        response_data = {
+            'id': str(user.id),
+            'email': user.email,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            'phone_number': user.phone_number,
+            'is_email_verified': user.is_email_verified,
+            'is_phone_verified': user.is_phone_verified,
+            'organization': user.organization,
+            'department': user.department,
+            'employee_id': user.employee_id,
+            'job_title': user.job_title,
+            'timezone': user.timezone,
+            'language': user.language,
+            'last_login': user.last_login.isoformat() if user.last_login else None,
+            'date_joined': user.date_joined.isoformat(),
+        }
         
-        password_service = PasswordService()
-        policy_info = password_service.get_password_policy_info()
+        return Response(response_data, status=status.HTTP_200_OK)
         
+    except Exception as e:
+        logger.error(f"User profile error: {str(e)}")
         return Response(
-            {
-                'policy': policy_info,
-                'message': _('Current password policy requirements')
-            },
-            status=status.HTTP_200_OK
-        )
-
-
-class EmailVerificationStatusView(APIView):
-    """
-    API view for checking email verification status.
-    
-    Provides verification status information for authenticated users.
-    """
-    
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def get(self, request: Request) -> Response:
-        """
-        Get email verification status for current user.
-        
-        Args:
-            request: HTTP request
-            
-        Returns:
-            Response with verification status information
-        """
-        from ..services.email_verification_service import EmailVerificationService
-        
-        email_service = EmailVerificationService()
-        status_info = email_service.get_verification_status(request.user)
-        
-        return Response(status_info, status=status.HTTP_200_OK)
-
-
-class EmailVerificationValidateTokenView(APIView):
-    """
-    API view for validating email verification tokens.
-    
-    Validates verification tokens without consuming them.
-    """
-    
-    permission_classes = [permissions.AllowAny]
-    
-    def post(self, request: Request) -> Response:
-        """
-        Validate email verification token.
-        
-        Args:
-            request: HTTP request with token data
-            
-        Returns:
-            Response with token validation status
-        """
-        from ..services.email_verification_service import EmailVerificationService
-        
-        user_id = request.data.get('user_id')
-        token = request.data.get('token')
-        
-        if not user_id or not token:
-            return Response(
-                {
-                    'error': _('User ID and token are required'),
-                    'valid': False
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        email_service = EmailVerificationService()
-        result = email_service.validate_verification_token(str(user_id), token)
-        
-        response_status = status.HTTP_200_OK if result['valid'] else status.HTTP_400_BAD_REQUEST
-        return Response(result, status=response_status)
-
-
-class EmailVerificationStatsView(APIView):
-    """
-    API view for email verification statistics.
-    
-    Provides verification statistics for monitoring and analytics.
-    """
-    
-    permission_classes = [permissions.IsAdminUser]
-    
-    def get(self, request: Request) -> Response:
-        """
-        Get email verification statistics.
-        
-        Args:
-            request: HTTP request
-            
-        Returns:
-            Response with verification statistics
-        """
-        from ..services.email_verification_service import EmailVerificationService
-        
-        email_service = EmailVerificationService()
-        stats = email_service.get_verification_statistics()
-        
-        return Response(
-            {
-                'statistics': stats,
-                'message': _('Email verification statistics')
-            },
-            status=status.HTTP_200_OK
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )

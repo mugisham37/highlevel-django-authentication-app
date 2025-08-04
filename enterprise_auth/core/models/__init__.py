@@ -5,6 +5,7 @@ Core models package for enterprise authentication system.
 from .base import BaseModel, AuditableModel, SoftDeleteModel, TimestampedModel
 from .user import UserProfile, UserIdentity
 from .audit import AuditLog, ProfileChangeHistory
+from .jwt import RefreshToken, TokenBlacklist, JWTKeyRotation
 
 __all__ = [
     'BaseModel',
@@ -15,4 +16,7 @@ __all__ = [
     'UserIdentity',
     'AuditLog',
     'ProfileChangeHistory',
+    'RefreshToken',
+    'TokenBlacklist',
+    'JWTKeyRotation',
 ]

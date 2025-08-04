@@ -18,6 +18,12 @@ from .views.auth_views import (
     PasswordResetValidateTokenView,
     PasswordStrengthCheckView,
     PasswordPolicyView,
+    login,
+    refresh_token,
+    logout,
+    introspect_token,
+    validate_token,
+    user_profile,
 )
 
 app_name = 'core'

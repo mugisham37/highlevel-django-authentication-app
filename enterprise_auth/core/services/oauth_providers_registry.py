@@ -14,6 +14,7 @@ from .oauth_registry import oauth_registry
 from .oauth_config import oauth_config_manager
 from .providers.google_oauth import GoogleOAuthProvider
 from .providers.github_oauth import GitHubOAuthProvider
+from .providers.microsoft_oauth import MicrosoftOAuthProvider
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +185,89 @@ def register_github_oauth_provider() -> None:
             pass
 
 
+def register_microsoft_oauth_provider() -> None:
+    """
+    Register and configure the Microsoft OAuth provider.
+    
+    This function registers the Microsoft OAuth provider with the registry
+    and configures it based on Django settings or environment variables.
+    """
+    try:
+        # Register the Microsoft OAuth provider
+        oauth_registry.register_provider(
+            name="microsoft",
+            provider_class=MicrosoftOAuthProvider,
+            display_name="Microsoft",
+            description="Sign in with your Microsoft account using OAuth2/OpenID Connect",
+            icon_url="https://docs.microsoft.com/en-us/azure/active-directory/develop/media/howto-add-branding-in-azure-ad-apps/ms-symbollockup_mssymbol_19.png",
+            documentation_url="https://docs.microsoft.com/en-us/azure/active-directory/develop/",
+            auto_configure=False  # We'll configure manually for better control
+        )
+        
+        # Try to load configuration from settings first
+        config = oauth_config_manager.load_config_from_settings("microsoft")
+        
+        # If not found in settings, try environment variables
+        if not config:
+            config = oauth_config_manager.load_config_from_env("microsoft")
+        
+        # If still not found, create a default configuration template
+        if not config:
+            logger.info(
+                "No Microsoft OAuth configuration found, creating default template",
+                extra={'provider': 'microsoft'}
+            )
+            
+            # Create default configuration with Microsoft's standard endpoints
+            config = oauth_config_manager.create_config(
+                provider_name="microsoft",
+                client_id=getattr(settings, 'MICROSOFT_OAUTH_CLIENT_ID', ''),
+                client_secret=getattr(settings, 'MICROSOFT_OAUTH_CLIENT_SECRET', ''),
+                redirect_uri=getattr(settings, 'MICROSOFT_OAUTH_REDIRECT_URI', ''),
+                scopes=getattr(settings, 'MICROSOFT_OAUTH_SCOPES', ['openid', 'profile', 'email', 'User.Read']),
+                authorization_url="https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+                token_url="https://login.microsoftonline.com/common/oauth2/v2.0/token",
+                user_info_url="https://graph.microsoft.com/v1.0/me",
+                revoke_url="https://login.microsoftonline.com/common/oauth2/v2.0/logout",
+                extra_params={
+                    'response_mode': 'query',
+                    'prompt': 'select_account',
+                },
+                timeout=30,
+                use_pkce=True
+            )
+        
+        # Configure the provider
+        if config:
+            oauth_registry.configure_provider("microsoft", config)
+            
+            # Enable the provider if it has valid configuration
+            if config.client_id and config.client_secret:
+                oauth_registry.enable_provider("microsoft")
+                logger.info(
+                    "Microsoft OAuth provider registered and enabled successfully",
+                    extra={'provider': 'microsoft'}
+                )
+            else:
+                oauth_registry.disable_provider("microsoft")
+                logger.warning(
+                    "Microsoft OAuth provider registered but disabled due to missing credentials",
+                    extra={'provider': 'microsoft'}
+                )
+        
+    except Exception as e:
+        logger.error(
+            f"Failed to register Microsoft OAuth provider: {e}",
+            extra={'provider': 'microsoft', 'error': str(e)}
+        )
+        
+        # Disable the provider if registration fails
+        try:
+            oauth_registry.disable_provider("microsoft")
+        except Exception:
+            pass
+
+
 def register_all_oauth_providers() -> None:
     """
     Register all available OAuth providers.
@@ -199,8 +283,10 @@ def register_all_oauth_providers() -> None:
     # Register GitHub OAuth provider
     register_github_oauth_provider()
     
+    # Register Microsoft OAuth provider
+    register_microsoft_oauth_provider()
+    
     # TODO: Register other providers as they are implemented
-    # register_microsoft_oauth_provider()
     # register_apple_oauth_provider()
     # register_linkedin_oauth_provider()
     
@@ -283,6 +369,12 @@ GITHUB_OAUTH_CLIENT_SECRET = 'your-github-client-secret'
 GITHUB_OAUTH_REDIRECT_URI = 'https://yourdomain.com/auth/github/callback'
 GITHUB_OAUTH_SCOPES = ['user:email', 'read:user', 'read:org']
 
+# Microsoft OAuth Configuration
+MICROSOFT_OAUTH_CLIENT_ID = 'your-microsoft-client-id'
+MICROSOFT_OAUTH_CLIENT_SECRET = 'your-microsoft-client-secret'
+MICROSOFT_OAUTH_REDIRECT_URI = 'https://yourdomain.com/auth/microsoft/callback'
+MICROSOFT_OAUTH_SCOPES = ['openid', 'profile', 'email', 'User.Read']
+
 # Alternative: Configure via OAUTH_PROVIDERS setting
 OAUTH_PROVIDERS = {
     'google': {
@@ -328,6 +420,28 @@ OAUTH_PROVIDERS = {
         'description': 'Sign in with your GitHub account',
         'icon_url': 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png',
         'documentation_url': 'https://docs.github.com/en/developers/apps/building-oauth-apps',
+    },
+    'microsoft': {
+        'provider_class': 'enterprise_auth.core.services.providers.microsoft_oauth.MicrosoftOAuthProvider',
+        'client_id': 'your-microsoft-client-id',
+        'client_secret': 'your-microsoft-client-secret',
+        'redirect_uri': 'https://yourdomain.com/auth/microsoft/callback',
+        'scopes': ['openid', 'profile', 'email', 'User.Read'],
+        'authorization_url': 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize',
+        'token_url': 'https://login.microsoftonline.com/common/oauth2/v2.0/token',
+        'user_info_url': 'https://graph.microsoft.com/v1.0/me',
+        'revoke_url': 'https://login.microsoftonline.com/common/oauth2/v2.0/logout',
+        'extra_params': {
+            'response_mode': 'query',
+            'prompt': 'select_account',
+        },
+        'timeout': 30,
+        'use_pkce': True,
+        'enabled': True,
+        'display_name': 'Microsoft',
+        'description': 'Sign in with your Microsoft account',
+        'icon_url': 'https://docs.microsoft.com/en-us/azure/active-directory/develop/media/howto-add-branding-in-azure-ad-apps/ms-symbollockup_mssymbol_19.png',
+        'documentation_url': 'https://docs.microsoft.com/en-us/azure/active-directory/develop/',
     }
 }
 
@@ -354,4 +468,16 @@ OAUTH_PROVIDERS = {
 # OAUTH_GITHUB_REVOKE_URL=https://api.github.com/applications/{client_id}/grant
 # OAUTH_GITHUB_TIMEOUT=30
 # OAUTH_GITHUB_USE_PKCE=true
+
+# Microsoft OAuth Environment Variables
+# OAUTH_MICROSOFT_CLIENT_ID=your-microsoft-client-id
+# OAUTH_MICROSOFT_CLIENT_SECRET=your-microsoft-client-secret
+# OAUTH_MICROSOFT_REDIRECT_URI=https://yourdomain.com/auth/microsoft/callback
+# OAUTH_MICROSOFT_SCOPES=openid,profile,email,User.Read
+# OAUTH_MICROSOFT_AUTHORIZATION_URL=https://login.microsoftonline.com/common/oauth2/v2.0/authorize
+# OAUTH_MICROSOFT_TOKEN_URL=https://login.microsoftonline.com/common/oauth2/v2.0/token
+# OAUTH_MICROSOFT_USER_INFO_URL=https://graph.microsoft.com/v1.0/me
+# OAUTH_MICROSOFT_REVOKE_URL=https://login.microsoftonline.com/common/oauth2/v2.0/logout
+# OAUTH_MICROSOFT_TIMEOUT=30
+# OAUTH_MICROSOFT_USE_PKCE=true
 """

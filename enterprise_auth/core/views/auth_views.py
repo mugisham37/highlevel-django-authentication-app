@@ -25,6 +25,9 @@ from ..serializers import (
     UserIdentitySerializer,
     EmailVerificationSerializer,
     ResendVerificationSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordStrengthCheckSerializer,
 )
 
 User = get_user_model()
@@ -325,6 +328,12 @@ class UserProfileViewSet(GenericViewSet, RetrieveModelMixin, UpdateModelMixin):
             Response with password change status
         """
         from ..serializers import PasswordChangeSerializer
+        from ..services.password_service import PasswordService
+        from ..exceptions import (
+            InvalidCredentialsError,
+            AccountLockedError,
+            PasswordPolicyError
+        )
         
         serializer = PasswordChangeSerializer(
             data=request.data,
@@ -332,20 +341,314 @@ class UserProfileViewSet(GenericViewSet, RetrieveModelMixin, UpdateModelMixin):
         )
         
         if serializer.is_valid():
-            user = request.user
-            user.set_password(serializer.validated_data['new_password'])
-            user.clear_password_reset_token()
-            user.save()
+            current_password = serializer.validated_data['current_password']
+            new_password = serializer.validated_data['new_password']
+            password_service = PasswordService()
             
-            return Response(
-                {
-                    'message': _('Password changed successfully.'),
-                    'status': 'changed'
-                },
-                status=status.HTTP_200_OK
-            )
+            try:
+                result = password_service.change_password(
+                    user=request.user,
+                    current_password=current_password,
+                    new_password=new_password
+                )
+                
+                return Response(
+                    {
+                        'message': result['message'],
+                        'status': 'changed',
+                        'strength_score': result['strength_score'],
+                        'changed_at': result['changed_at']
+                    },
+                    status=status.HTTP_200_OK
+                )
+                
+            except InvalidCredentialsError as e:
+                return Response(
+                    {
+                        'error': str(e),
+                        'status': 'invalid_credentials'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+            except AccountLockedError as e:
+                return Response(
+                    {
+                        'error': str(e),
+                        'status': 'account_locked',
+                        'locked_until': e.details.get('locked_until')
+                    },
+                    status=status.HTTP_423_LOCKED
+                )
+                
+            except PasswordPolicyError as e:
+                return Response(
+                    {
+                        'error': str(e),
+                        'validation_errors': e.details.get('validation_errors', []),
+                        'status': 'policy_violation'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+            except Exception as e:
+                return Response(
+                    {
+                        'error': _('Unable to change password. Please try again later.'),
+                        'details': str(e) if settings.DEBUG else None
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         
         return Response(
             serializer.errors,
             status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class PasswordResetRequestView(APIView):
+    """
+    API view for password reset request.
+    
+    Handles password reset initiation with secure token generation.
+    """
+    
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request: Request) -> Response:
+        """
+        Initiate password reset workflow.
+        
+        Args:
+            request: HTTP request with email address
+            
+        Returns:
+            Response with reset initiation status
+        """
+        from ..serializers import PasswordResetRequestSerializer
+        from ..services.password_service import PasswordService
+        
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            email = serializer.validated_data['email']
+            password_service = PasswordService()
+            
+            try:
+                result = password_service.initiate_password_reset(email)
+                
+                return Response(
+                    {
+                        'message': result['message'],
+                        'status': 'initiated' if result['success'] else 'failed'
+                    },
+                    status=status.HTTP_200_OK if result['success'] else status.HTTP_429_TOO_MANY_REQUESTS
+                )
+                
+            except Exception as e:
+                return Response(
+                    {
+                        'error': _('Unable to process password reset request. Please try again later.'),
+                        'details': str(e) if settings.DEBUG else None
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class PasswordResetConfirmView(APIView):
+    """
+    API view for password reset confirmation.
+    
+    Handles password reset completion with token validation.
+    """
+    
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request: Request) -> Response:
+        """
+        Complete password reset workflow.
+        
+        Args:
+            request: HTTP request with token and new password
+            
+        Returns:
+            Response with reset completion status
+        """
+        from ..serializers import PasswordResetConfirmSerializer
+        from ..services.password_service import PasswordService
+        from ..exceptions import (
+            TokenInvalidError, 
+            TokenExpiredError, 
+            PasswordPolicyError
+        )
+        
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            token = serializer.validated_data['token']
+            new_password = serializer.validated_data['new_password']
+            password_service = PasswordService()
+            
+            try:
+                result = password_service.reset_password(token, new_password)
+                
+                return Response(
+                    {
+                        'message': result['message'],
+                        'status': 'completed',
+                        'strength_score': result['strength_score']
+                    },
+                    status=status.HTTP_200_OK
+                )
+                
+            except (TokenInvalidError, TokenExpiredError) as e:
+                return Response(
+                    {
+                        'error': str(e),
+                        'status': 'invalid_token'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+            except PasswordPolicyError as e:
+                return Response(
+                    {
+                        'error': str(e),
+                        'validation_errors': e.details.get('validation_errors', []),
+                        'status': 'policy_violation'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+            except Exception as e:
+                return Response(
+                    {
+                        'error': _('Unable to reset password. Please try again later.'),
+                        'details': str(e) if settings.DEBUG else None
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+        
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class PasswordResetValidateTokenView(APIView):
+    """
+    API view for password reset token validation.
+    
+    Validates reset tokens without consuming them.
+    """
+    
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request: Request) -> Response:
+        """
+        Validate password reset token.
+        
+        Args:
+            request: HTTP request with token
+            
+        Returns:
+            Response with token validation status
+        """
+        from ..services.password_service import PasswordService
+        
+        token = request.data.get('token')
+        if not token:
+            return Response(
+                {
+                    'error': _('Token is required'),
+                    'valid': False
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        password_service = PasswordService()
+        result = password_service.validate_reset_token(token)
+        
+        return Response(
+            result,
+            status=status.HTTP_200_OK if result['valid'] else status.HTTP_400_BAD_REQUEST
+        )
+
+
+class PasswordStrengthCheckView(APIView):
+    """
+    API view for password strength checking.
+    
+    Provides real-time password strength feedback.
+    """
+    
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request: Request) -> Response:
+        """
+        Check password strength.
+        
+        Args:
+            request: HTTP request with password
+            
+        Returns:
+            Response with strength analysis
+        """
+        from ..serializers import PasswordStrengthCheckSerializer
+        from ..services.password_service import PasswordService
+        
+        serializer = PasswordStrengthCheckSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            password = serializer.validated_data['password']
+            password_service = PasswordService()
+            
+            # Get user context if authenticated
+            user = request.user if request.user.is_authenticated else None
+            
+            result = password_service.check_password_strength(password, user)
+            
+            return Response(result, status=status.HTTP_200_OK)
+        
+        return Response(
+            serializer.errors,
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+
+class PasswordPolicyView(APIView):
+    """
+    API view for password policy information.
+    
+    Provides current password policy requirements.
+    """
+    
+    permission_classes = [permissions.AllowAny]
+    
+    def get(self, request: Request) -> Response:
+        """
+        Get password policy information.
+        
+        Args:
+            request: HTTP request
+            
+        Returns:
+            Response with policy information
+        """
+        from ..services.password_service import PasswordService
+        
+        password_service = PasswordService()
+        policy_info = password_service.get_password_policy_info()
+        
+        return Response(
+            {
+                'policy': policy_info,
+                'message': _('Current password policy requirements')
+            },
+            status=status.HTTP_200_OK
         )

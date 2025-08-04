@@ -685,3 +685,120 @@ class PasswordChangeSerializer(serializers.Serializer):
             })
         
         return attrs
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """
+    Serializer for password reset request.
+    
+    Handles password reset initiation with email validation.
+    """
+    
+    email = serializers.EmailField(
+        help_text="Email address for password reset"
+    )
+    
+    def validate_email(self, value: str) -> str:
+        """
+        Validate email format.
+        
+        Args:
+            value: Email address
+            
+        Returns:
+            Validated email address
+        """
+        return value.lower().strip()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """
+    Serializer for password reset confirmation.
+    
+    Handles password reset completion with token validation.
+    """
+    
+    token = serializers.CharField(
+        help_text="Password reset token"
+    )
+    new_password = serializers.CharField(
+        write_only=True,
+        min_length=12,
+        help_text="New password"
+    )
+    new_password_confirm = serializers.CharField(
+        write_only=True,
+        help_text="Confirm new password"
+    )
+    
+    def validate_new_password(self, value: str) -> str:
+        """
+        Validate new password strength.
+        
+        Args:
+            value: New password to validate
+            
+        Returns:
+            Validated new password
+            
+        Raises:
+            ValidationError: If new password is invalid
+        """
+        from .utils.password import password_policy
+        
+        # Get basic validation without user context
+        validation_result = password_policy.validate_password(value)
+        
+        if not validation_result['is_valid']:
+            raise ValidationError(validation_result['errors'])
+        
+        return value
+    
+    def validate(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate the password reset data.
+        
+        Args:
+            attrs: Password reset data
+            
+        Returns:
+            Validated data
+            
+        Raises:
+            ValidationError: If validation fails
+        """
+        new_password = attrs.get('new_password')
+        new_password_confirm = attrs.get('new_password_confirm')
+        
+        # Check password confirmation
+        if new_password != new_password_confirm:
+            raise ValidationError({
+                'new_password_confirm': _('New password confirmation does not match.')
+            })
+        
+        return attrs
+
+
+class PasswordStrengthCheckSerializer(serializers.Serializer):
+    """
+    Serializer for password strength checking.
+    
+    Provides real-time password strength feedback.
+    """
+    
+    password = serializers.CharField(
+        write_only=True,
+        help_text="Password to check strength"
+    )
+    
+    def validate_password(self, value: str) -> str:
+        """
+        Basic password validation.
+        
+        Args:
+            value: Password to validate
+            
+        Returns:
+            Password value
+        """
+        return value

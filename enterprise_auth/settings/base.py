@@ -226,13 +226,47 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
-# Password hashing
+# Password hashing with optimized Argon2 parameters
 PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.Argon2PasswordHasher',
     'django.contrib.auth.hashers.PBKDF2PasswordHasher',
     'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
     'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',
 ]
+
+# Argon2 optimal parameters for enterprise security
+ARGON2_TIME_COST = config('ARGON2_TIME_COST', default=3, cast=int)  # Number of iterations
+ARGON2_MEMORY_COST = config('ARGON2_MEMORY_COST', default=65536, cast=int)  # Memory usage in KB (64MB)
+ARGON2_PARALLELISM = config('ARGON2_PARALLELISM', default=2, cast=int)  # Number of parallel threads
+ARGON2_HASH_LEN = config('ARGON2_HASH_LEN', default=32, cast=int)  # Hash length in bytes
+ARGON2_SALT_LEN = config('ARGON2_SALT_LEN', default=16, cast=int)  # Salt length in bytes
+
+# Password policy configuration
+PASSWORD_MIN_LENGTH = config('PASSWORD_MIN_LENGTH', default=12, cast=int)
+PASSWORD_MAX_LENGTH = config('PASSWORD_MAX_LENGTH', default=128, cast=int)
+PASSWORD_REQUIRE_UPPERCASE = config('PASSWORD_REQUIRE_UPPERCASE', default=True, cast=bool)
+PASSWORD_REQUIRE_LOWERCASE = config('PASSWORD_REQUIRE_LOWERCASE', default=True, cast=bool)
+PASSWORD_REQUIRE_DIGITS = config('PASSWORD_REQUIRE_DIGITS', default=True, cast=bool)
+PASSWORD_REQUIRE_SPECIAL_CHARS = config('PASSWORD_REQUIRE_SPECIAL_CHARS', default=True, cast=bool)
+PASSWORD_MIN_UPPERCASE = config('PASSWORD_MIN_UPPERCASE', default=1, cast=int)
+PASSWORD_MIN_LOWERCASE = config('PASSWORD_MIN_LOWERCASE', default=1, cast=int)
+PASSWORD_MIN_DIGITS = config('PASSWORD_MIN_DIGITS', default=1, cast=int)
+PASSWORD_MIN_SPECIAL_CHARS = config('PASSWORD_MIN_SPECIAL_CHARS', default=1, cast=int)
+PASSWORD_SPECIAL_CHARS = config('PASSWORD_SPECIAL_CHARS', default='!@#$%^&*()_+-=[]{}|;:,.<>?')
+PASSWORD_MAX_CONSECUTIVE_CHARS = config('PASSWORD_MAX_CONSECUTIVE_CHARS', default=3, cast=int)
+PASSWORD_MAX_REPEATED_CHARS = config('PASSWORD_MAX_REPEATED_CHARS', default=3, cast=int)
+PASSWORD_CHECK_COMMON_PASSWORDS = config('PASSWORD_CHECK_COMMON_PASSWORDS', default=True, cast=bool)
+PASSWORD_CHECK_USER_ATTRIBUTES = config('PASSWORD_CHECK_USER_ATTRIBUTES', default=True, cast=bool)
+PASSWORD_MIN_UNIQUE_CHARS = config('PASSWORD_MIN_UNIQUE_CHARS', default=8, cast=int)
+PASSWORD_ENTROPY_THRESHOLD = config('PASSWORD_ENTROPY_THRESHOLD', default=50, cast=int)
+
+# Password management settings
+PASSWORD_MAX_FAILED_ATTEMPTS = config('PASSWORD_MAX_FAILED_ATTEMPTS', default=5, cast=int)
+PASSWORD_LOCKOUT_DURATION_MINUTES = config('PASSWORD_LOCKOUT_DURATION_MINUTES', default=30, cast=int)
+PASSWORD_RESET_TOKEN_LENGTH = config('PASSWORD_RESET_TOKEN_LENGTH', default=32, cast=int)
+PASSWORD_RESET_TOKEN_EXPIRY_HOURS = config('PASSWORD_RESET_TOKEN_EXPIRY_HOURS', default=1, cast=int)
+PASSWORD_HISTORY_COUNT = config('PASSWORD_HISTORY_COUNT', default=5, cast=int)
+PASSWORD_MIN_AGE_HOURS = config('PASSWORD_MIN_AGE_HOURS', default=1, cast=int)
 
 # Internationalization
 LANGUAGE_CODE = 'en-us'

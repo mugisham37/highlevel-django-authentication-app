@@ -358,6 +358,22 @@ class PasswordValidationError(ValidationError):
         super().__init__(message, error_code="PASSWORD_VALIDATION_ERROR", **kwargs)
 
 
+class PasswordPolicyError(ValidationError):
+    """Exception raised when password policy is violated."""
+    
+    def __init__(
+        self,
+        message: str = "Password policy violation",
+        validation_errors: Optional[list] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if validation_errors:
+            details['validation_errors'] = validation_errors
+        kwargs['details'] = details
+        super().__init__(message, error_code="PASSWORD_POLICY_ERROR", **kwargs)
+
+
 class EmailValidationError(ValidationError):
     """Exception raised when email validation fails."""
     

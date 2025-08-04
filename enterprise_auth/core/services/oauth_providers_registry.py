@@ -13,6 +13,7 @@ from django.conf import settings
 from .oauth_registry import oauth_registry
 from .oauth_config import oauth_config_manager
 from .providers.google_oauth import GoogleOAuthProvider
+from .providers.github_oauth import GitHubOAuthProvider
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +102,88 @@ def register_google_oauth_provider() -> None:
             pass
 
 
+def register_github_oauth_provider() -> None:
+    """
+    Register and configure the GitHub OAuth provider.
+    
+    This function registers the GitHub OAuth provider with the registry
+    and configures it based on Django settings or environment variables.
+    """
+    try:
+        # Register the GitHub OAuth provider
+        oauth_registry.register_provider(
+            name="github",
+            provider_class=GitHubOAuthProvider,
+            display_name="GitHub",
+            description="Sign in with your GitHub account using OAuth2",
+            icon_url="https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
+            documentation_url="https://docs.github.com/en/developers/apps/building-oauth-apps",
+            auto_configure=False  # We'll configure manually for better control
+        )
+        
+        # Try to load configuration from settings first
+        config = oauth_config_manager.load_config_from_settings("github")
+        
+        # If not found in settings, try environment variables
+        if not config:
+            config = oauth_config_manager.load_config_from_env("github")
+        
+        # If still not found, create a default configuration template
+        if not config:
+            logger.info(
+                "No GitHub OAuth configuration found, creating default template",
+                extra={'provider': 'github'}
+            )
+            
+            # Create default configuration with GitHub's standard endpoints
+            config = oauth_config_manager.create_config(
+                provider_name="github",
+                client_id=getattr(settings, 'GITHUB_OAUTH_CLIENT_ID', ''),
+                client_secret=getattr(settings, 'GITHUB_OAUTH_CLIENT_SECRET', ''),
+                redirect_uri=getattr(settings, 'GITHUB_OAUTH_REDIRECT_URI', ''),
+                scopes=getattr(settings, 'GITHUB_OAUTH_SCOPES', ['user:email', 'read:user']),
+                authorization_url="https://github.com/login/oauth/authorize",
+                token_url="https://github.com/login/oauth/access_token",
+                user_info_url="https://api.github.com/user",
+                revoke_url="https://api.github.com/applications/{client_id}/grant",
+                extra_params={
+                    'allow_signup': 'true',
+                },
+                timeout=30,
+                use_pkce=True
+            )
+        
+        # Configure the provider
+        if config:
+            oauth_registry.configure_provider("github", config)
+            
+            # Enable the provider if it has valid configuration
+            if config.client_id and config.client_secret:
+                oauth_registry.enable_provider("github")
+                logger.info(
+                    "GitHub OAuth provider registered and enabled successfully",
+                    extra={'provider': 'github'}
+                )
+            else:
+                oauth_registry.disable_provider("github")
+                logger.warning(
+                    "GitHub OAuth provider registered but disabled due to missing credentials",
+                    extra={'provider': 'github'}
+                )
+        
+    except Exception as e:
+        logger.error(
+            f"Failed to register GitHub OAuth provider: {e}",
+            extra={'provider': 'github', 'error': str(e)}
+        )
+        
+        # Disable the provider if registration fails
+        try:
+            oauth_registry.disable_provider("github")
+        except Exception:
+            pass
+
+
 def register_all_oauth_providers() -> None:
     """
     Register all available OAuth providers.
@@ -113,8 +196,10 @@ def register_all_oauth_providers() -> None:
     # Register Google OAuth provider
     register_google_oauth_provider()
     
+    # Register GitHub OAuth provider
+    register_github_oauth_provider()
+    
     # TODO: Register other providers as they are implemented
-    # register_github_oauth_provider()
     # register_microsoft_oauth_provider()
     # register_apple_oauth_provider()
     # register_linkedin_oauth_provider()
@@ -182,7 +267,7 @@ def initialize_oauth_system() -> None:
         raise
 
 
-# Example Django settings for Google OAuth
+# Example Django settings for OAuth providers
 EXAMPLE_SETTINGS = """
 # Add to your Django settings.py
 
@@ -191,6 +276,12 @@ GOOGLE_OAUTH_CLIENT_ID = 'your-google-client-id.apps.googleusercontent.com'
 GOOGLE_OAUTH_CLIENT_SECRET = 'your-google-client-secret'
 GOOGLE_OAUTH_REDIRECT_URI = 'https://yourdomain.com/auth/google/callback'
 GOOGLE_OAUTH_SCOPES = ['openid', 'email', 'profile']
+
+# GitHub OAuth Configuration
+GITHUB_OAUTH_CLIENT_ID = 'your-github-client-id'
+GITHUB_OAUTH_CLIENT_SECRET = 'your-github-client-secret'
+GITHUB_OAUTH_REDIRECT_URI = 'https://yourdomain.com/auth/github/callback'
+GITHUB_OAUTH_SCOPES = ['user:email', 'read:user', 'read:org']
 
 # Alternative: Configure via OAUTH_PROVIDERS setting
 OAUTH_PROVIDERS = {
@@ -216,6 +307,27 @@ OAUTH_PROVIDERS = {
         'description': 'Sign in with your Google account',
         'icon_url': 'https://developers.google.com/identity/images/g-logo.png',
         'documentation_url': 'https://developers.google.com/identity/protocols/oauth2',
+    },
+    'github': {
+        'provider_class': 'enterprise_auth.core.services.providers.github_oauth.GitHubOAuthProvider',
+        'client_id': 'your-github-client-id',
+        'client_secret': 'your-github-client-secret',
+        'redirect_uri': 'https://yourdomain.com/auth/github/callback',
+        'scopes': ['user:email', 'read:user', 'read:org'],
+        'authorization_url': 'https://github.com/login/oauth/authorize',
+        'token_url': 'https://github.com/login/oauth/access_token',
+        'user_info_url': 'https://api.github.com/user',
+        'revoke_url': 'https://api.github.com/applications/{client_id}/grant',
+        'extra_params': {
+            'allow_signup': 'true',
+        },
+        'timeout': 30,
+        'use_pkce': True,
+        'enabled': True,
+        'display_name': 'GitHub',
+        'description': 'Sign in with your GitHub account',
+        'icon_url': 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png',
+        'documentation_url': 'https://docs.github.com/en/developers/apps/building-oauth-apps',
     }
 }
 
@@ -230,4 +342,16 @@ OAUTH_PROVIDERS = {
 # OAUTH_GOOGLE_REVOKE_URL=https://oauth2.googleapis.com/revoke
 # OAUTH_GOOGLE_TIMEOUT=30
 # OAUTH_GOOGLE_USE_PKCE=true
+
+# GitHub OAuth Environment Variables
+# OAUTH_GITHUB_CLIENT_ID=your-github-client-id
+# OAUTH_GITHUB_CLIENT_SECRET=your-github-client-secret
+# OAUTH_GITHUB_REDIRECT_URI=https://yourdomain.com/auth/github/callback
+# OAUTH_GITHUB_SCOPES=user:email,read:user,read:org
+# OAUTH_GITHUB_AUTHORIZATION_URL=https://github.com/login/oauth/authorize
+# OAUTH_GITHUB_TOKEN_URL=https://github.com/login/oauth/access_token
+# OAUTH_GITHUB_USER_INFO_URL=https://api.github.com/user
+# OAUTH_GITHUB_REVOKE_URL=https://api.github.com/applications/{client_id}/grant
+# OAUTH_GITHUB_TIMEOUT=30
+# OAUTH_GITHUB_USE_PKCE=true
 """

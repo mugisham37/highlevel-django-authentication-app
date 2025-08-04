@@ -7,7 +7,7 @@ from .base import *
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', 'testserver']
 
 # Development-specific apps
 INSTALLED_APPS += [
@@ -120,3 +120,8 @@ SECURE_CONTENT_TYPE_NOSNIFF = False
 # Development rate limiting (more permissive)
 RATE_LIMIT_PER_IP = '1000/hour'
 RATE_LIMIT_PER_USER = '10000/hour'
+
+# Frontend URL for email links
+FRONTEND_URL = 'http://localhost:3000'
+SITE_NAME = 'Enterprise Auth'
+SUPPORT_EMAIL = 'support@enterprise-auth.com'

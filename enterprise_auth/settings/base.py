@@ -32,7 +32,7 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
-    'enterprise_auth.apps.EnterpriseAuthConfig',  # Main project app with proper configuration
+    'enterprise_auth.core.apps.CoreConfig',  # Core authentication app
     # Additional apps will be added as we create them
 ]
 
@@ -365,7 +365,7 @@ EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@enterprise-auth.com')
 
 # Custom settings for the authentication system
-AUTH_USER_MODEL = 'auth.User'  # Will be changed to custom user model later
+AUTH_USER_MODEL = 'core.UserProfile'
 
 # JWT Configuration (will be implemented later)
 JWT_SECRET_KEY = config('JWT_SECRET_KEY', default=SECRET_KEY)

@@ -33,6 +33,16 @@ from .views.oauth_views import (
     oauth_error_details,
     oauth_metrics_summary,
 )
+from .views.mfa_views import (
+    setup_totp,
+    confirm_totp_setup,
+    verify_totp,
+    verify_backup_code,
+    regenerate_backup_codes,
+    list_mfa_devices,
+    disable_mfa_device,
+    mfa_status,
+)
 
 app_name = 'core'
 
@@ -76,4 +86,14 @@ urlpatterns = [
     path('oauth/linking-statistics/', get_social_linking_statistics, name='get_social_linking_statistics'),
     path('oauth/health/', oauth_provider_health, name='oauth_provider_health'),
     path('oauth/metrics/', oauth_metrics_summary, name='oauth_metrics_summary'),
+    
+    # MFA endpoints
+    path('mfa/setup/totp/', setup_totp, name='setup_totp'),
+    path('mfa/confirm/totp/', confirm_totp_setup, name='confirm_totp_setup'),
+    path('mfa/verify/totp/', verify_totp, name='verify_totp'),
+    path('mfa/verify/backup-code/', verify_backup_code, name='verify_backup_code'),
+    path('mfa/backup-codes/regenerate/', regenerate_backup_codes, name='regenerate_backup_codes'),
+    path('mfa/devices/', list_mfa_devices, name='list_mfa_devices'),
+    path('mfa/devices/disable/', disable_mfa_device, name='disable_mfa_device'),
+    path('mfa/status/', mfa_status, name='mfa_status'),
 ]

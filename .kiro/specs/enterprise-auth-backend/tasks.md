@@ -154,7 +154,7 @@
 
 ## Phase 5: Multi-Factor Authentication System
 
-- [ ] 19. Implement TOTP (Time-based One-Time Password) system
+- [x] 19. Implement TOTP (Time-based One-Time Password) system
 
   - Create TOTP setup with QR code generation
   - Implement TOTP verification with time window tolerance
@@ -162,7 +162,7 @@
   - Add TOTP device management and recovery
   - _Requirements: 4.1, 4.4_
 
-- [ ] 20. Build SMS-based MFA system
+- [-] 20. Build SMS-based MFA system
 
   - Integrate Twilio SDK for SMS delivery
   - Implement SMS verification code generation and validation

@@ -563,3 +563,256 @@ class UserIdentityManager(models.Manager):
         unused_identities.delete()
         
         return count
+
+
+class MFADeviceManager(models.Manager):
+    """
+    Custom manager for MFADevice model.
+    
+    Provides methods for managing MFA devices and security operations.
+    """
+    
+    def create_totp_device(
+        self,
+        user: 'UserProfile',
+        device_name: str,
+        secret_key: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> 'MFADevice':
+        """
+        Create a new TOTP device for a user.
+        
+        Args:
+            user: User to create the device for
+            device_name: User-friendly name for the device
+            secret_key: TOTP secret key
+            ip_address: IP address where device was created
+            user_agent: User agent string
+            
+        Returns:
+            Created MFADevice instance
+        """
+        device = self.create(
+            user=user,
+            device_type='totp',
+            device_name=device_name,
+            created_ip=ip_address,
+            created_user_agent=user_agent
+        )
+        device.set_secret_key(secret_key)
+        return device
+    
+    def create_sms_device(
+        self,
+        user: 'UserProfile',
+        device_name: str,
+        phone_number: str,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> 'MFADevice':
+        """
+        Create a new SMS device for a user.
+        
+        Args:
+            user: User to create the device for
+            device_name: User-friendly name for the device
+            phone_number: Phone number for SMS delivery
+            ip_address: IP address where device was created
+            user_agent: User agent string
+            
+        Returns:
+            Created MFADevice instance
+        """
+        device = self.create(
+            user=user,
+            device_type='sms',
+            device_name=device_name,
+            created_ip=ip_address,
+            created_user_agent=user_agent
+        )
+        device.set_phone_number(phone_number)
+        return device
+    
+    def create_email_device(
+        self,
+        user: 'UserProfile',
+        device_name: str,
+        email_address: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> 'MFADevice':
+        """
+        Create a new email device for a user.
+        
+        Args:
+            user: User to create the device for
+            device_name: User-friendly name for the device
+            email_address: Email address (defaults to user's email)
+            ip_address: IP address where device was created
+            user_agent: User agent string
+            
+        Returns:
+            Created MFADevice instance
+        """
+        return self.create(
+            user=user,
+            device_type='email',
+            device_name=device_name,
+            email_address=email_address or user.email,
+            created_ip=ip_address,
+            created_user_agent=user_agent
+        )
+    
+    def create_backup_codes_device(
+        self,
+        user: 'UserProfile',
+        device_name: str = 'Backup Codes',
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None
+    ) -> 'MFADevice':
+        """
+        Create a new backup codes device for a user.
+        
+        Args:
+            user: User to create the device for
+            device_name: User-friendly name for the device
+            ip_address: IP address where device was created
+            user_agent: User agent string
+            
+        Returns:
+            Created MFADevice instance with generated backup codes
+        """
+        device = self.create(
+            user=user,
+            device_type='backup_codes',
+            device_name=device_name,
+            created_ip=ip_address,
+            created_user_agent=user_agent
+        )
+        device.generate_backup_codes()
+        return device
+    
+    def get_user_devices(self, user: 'UserProfile', active_only: bool = True):
+        """
+        Get all MFA devices for a user.
+        
+        Args:
+            user: User to get devices for
+            active_only: Whether to return only active devices
+            
+        Returns:
+            QuerySet of MFA devices
+        """
+        queryset = self.filter(user=user)
+        if active_only:
+            queryset = queryset.filter(status='active', is_confirmed=True)
+        return queryset.order_by('device_type', 'device_name')
+    
+    def get_active_devices(self, user: 'UserProfile'):
+        """
+        Get active MFA devices for a user.
+        
+        Args:
+            user: User to get devices for
+            
+        Returns:
+            QuerySet of active MFA devices
+        """
+        return self.filter(
+            user=user,
+            status='active',
+            is_confirmed=True
+        ).order_by('device_type', 'device_name')
+    
+    def get_totp_devices(self, user: 'UserProfile', active_only: bool = True):
+        """
+        Get TOTP devices for a user.
+        
+        Args:
+            user: User to get devices for
+            active_only: Whether to return only active devices
+            
+        Returns:
+            QuerySet of TOTP devices
+        """
+        queryset = self.filter(user=user, device_type='totp')
+        if active_only:
+            queryset = queryset.filter(status='active', is_confirmed=True)
+        return queryset
+    
+    def get_backup_codes_device(self, user: 'UserProfile') -> Optional['MFADevice']:
+        """
+        Get the backup codes device for a user.
+        
+        Args:
+            user: User to get backup codes device for
+            
+        Returns:
+            MFADevice instance or None if not found
+        """
+        try:
+            return self.get(
+                user=user,
+                device_type='backup_codes',
+                status='active',
+                is_confirmed=True
+            )
+        except self.model.DoesNotExist:
+            return None
+    
+    def has_active_mfa(self, user: 'UserProfile') -> bool:
+        """
+        Check if a user has any active MFA devices.
+        
+        Args:
+            user: User to check
+            
+        Returns:
+            True if user has active MFA devices
+        """
+        return self.filter(
+            user=user,
+            status='active',
+            is_confirmed=True
+        ).exists()
+    
+    def disable_all_devices(self, user: 'UserProfile', reason: str = 'security_incident') -> int:
+        """
+        Disable all MFA devices for a user.
+        
+        Args:
+            user: User to disable devices for
+            reason: Reason for disabling devices
+            
+        Returns:
+            Number of devices disabled
+        """
+        devices = self.filter(user=user, status='active')
+        count = devices.count()
+        
+        for device in devices:
+            device.disable_device(reason)
+        
+        return count
+    
+    def cleanup_unused_devices(self, days: int = 90) -> int:
+        """
+        Clean up MFA devices that haven't been used for a specified period.
+        
+        Args:
+            days: Number of days of inactivity before cleanup
+            
+        Returns:
+            Number of devices cleaned up
+        """
+        cutoff_date = timezone.now() - timezone.timedelta(days=days)
+        unused_devices = self.filter(
+            last_used__lt=cutoff_date,
+            status__in=['disabled', 'compromised']
+        )
+        
+        count = unused_devices.count()
+        unused_devices.delete()
+        
+        return count

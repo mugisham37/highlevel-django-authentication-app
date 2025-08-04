@@ -128,6 +128,103 @@ class MFAInvalidError(AuthenticationError):
         super().__init__(message, error_code="MFA_INVALID", **kwargs)
 
 
+# MFA Exceptions
+class MFAError(EnterpriseAuthError):
+    """Base exception for MFA-related errors."""
+    pass
+
+
+class MFADeviceNotFoundError(MFAError):
+    """Exception raised when MFA device is not found."""
+    
+    def __init__(
+        self,
+        message: str = "MFA device not found",
+        device_id: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if device_id:
+            details['device_id'] = device_id
+        kwargs['details'] = details
+        super().__init__(message, error_code="MFA_DEVICE_NOT_FOUND", **kwargs)
+
+
+class MFAVerificationError(MFAError):
+    """Exception raised when MFA verification fails."""
+    
+    def __init__(
+        self,
+        message: str = "MFA verification failed",
+        device_type: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if device_type:
+            details['device_type'] = device_type
+        kwargs['details'] = details
+        super().__init__(message, error_code="MFA_VERIFICATION_ERROR", **kwargs)
+
+
+class MFARateLimitError(MFAError):
+    """Exception raised when MFA rate limit is exceeded."""
+    
+    def __init__(
+        self,
+        message: str = "MFA rate limit exceeded",
+        retry_after: Optional[int] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if retry_after:
+            details['retry_after'] = retry_after
+        kwargs['details'] = details
+        super().__init__(message, error_code="MFA_RATE_LIMIT_ERROR", **kwargs)
+
+
+class MFADeviceDisabledError(MFAError):
+    """Exception raised when MFA device is disabled."""
+    
+    def __init__(
+        self,
+        message: str = "MFA device is disabled",
+        device_id: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if device_id:
+            details['device_id'] = device_id
+        kwargs['details'] = details
+        super().__init__(message, error_code="MFA_DEVICE_DISABLED", **kwargs)
+
+
+class MFASetupError(MFAError):
+    """Exception raised when MFA setup fails."""
+    
+    def __init__(
+        self,
+        message: str = "MFA setup failed",
+        device_type: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if device_type:
+            details['device_type'] = device_type
+        kwargs['details'] = details
+        super().__init__(message, error_code="MFA_SETUP_ERROR", **kwargs)
+
+
+class MFABackupCodeError(MFAError):
+    """Exception raised when backup code operation fails."""
+    
+    def __init__(
+        self,
+        message: str = "Backup code operation failed",
+        **kwargs
+    ):
+        super().__init__(message, error_code="MFA_BACKUP_CODE_ERROR", **kwargs)
+
+
 # Token Exceptions
 class TokenError(EnterpriseAuthError):
     """Base exception for token-related errors."""

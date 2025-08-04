@@ -6,6 +6,7 @@ from .base import BaseModel, AuditableModel, SoftDeleteModel, TimestampedModel
 from .user import UserProfile, UserIdentity
 from .audit import AuditLog, ProfileChangeHistory
 from .jwt import RefreshToken, TokenBlacklist, JWTKeyRotation
+from .mfa import MFADevice, MFAAttempt
 
 __all__ = [
     'BaseModel',
@@ -19,4 +20,6 @@ __all__ = [
     'RefreshToken',
     'TokenBlacklist',
     'JWTKeyRotation',
+    'MFADevice',
+    'MFAAttempt',
 ]

@@ -16,6 +16,9 @@ from .views.auth_views import (
     revoke_all_user_tokens,
     revoke_device_tokens,
     bulk_revoke_tokens,
+    check_token_refresh_needed,
+    get_refresh_token_family,
+    revoke_refresh_token_family,
 )
 
 app_name = 'core'
@@ -42,4 +45,9 @@ urlpatterns = [
     path('auth/revoke-all/', revoke_all_user_tokens, name='revoke_all_user_tokens'),
     path('auth/revoke-device/', revoke_device_tokens, name='revoke_device_tokens'),
     path('auth/bulk-revoke/', bulk_revoke_tokens, name='bulk_revoke_tokens'),
+    
+    # Token refresh and family management endpoints
+    path('auth/check-refresh/', check_token_refresh_needed, name='check_token_refresh_needed'),
+    path('auth/token-family/', get_refresh_token_family, name='get_refresh_token_family'),
+    path('auth/revoke-family/', revoke_refresh_token_family, name='revoke_refresh_token_family'),
 ]

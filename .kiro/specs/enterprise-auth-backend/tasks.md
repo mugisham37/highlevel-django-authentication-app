@@ -94,7 +94,7 @@
   - Add bulk token revocation for security incidents
   - _Requirements: 2.6, 2.8_
 
-- [-] 12. Create token refresh and rotation system
+- [x] 12. Create token refresh and rotation system
 
   - Implement refresh token rotation to prevent replay attacks
   - Create automatic token refresh flow for client applications

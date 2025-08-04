@@ -67,6 +67,50 @@ def cleanup_expired_blacklisted_tokens(self) -> Dict[str, Any]:
 
 
 @shared_task(bind=True, max_retries=3)
+def cleanup_expired_refresh_tokens(self) -> Dict[str, Any]:
+    """
+    Clean up expired refresh tokens from the database.
+    
+    This task runs periodically to:
+    1. Mark expired active tokens as expired
+    2. Delete very old token records to maintain performance
+    3. Update token family chains
+    
+    Returns:
+        Dict with cleanup statistics
+    """
+    try:
+        logger.info("Starting expired refresh token cleanup")
+        
+        # Use the JWT service cleanup method
+        cleanup_stats = jwt_service.cleanup_expired_refresh_tokens()
+        
+        logger.info(f"Refresh token cleanup completed: {cleanup_stats}")
+        
+        return {
+            'status': 'success',
+            'task': 'cleanup_expired_refresh_tokens',
+            'stats': cleanup_stats,
+            'timestamp': timezone.now().isoformat()
+        }
+        
+    except Exception as exc:
+        logger.error(f"Error in cleanup_expired_refresh_tokens task: {str(exc)}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            retry_delay = 60 * (2 ** self.request.retries)  # 60s, 120s, 240s
+            raise self.retry(countdown=retry_delay, exc=exc)
+        
+        return {
+            'status': 'error',
+            'task': 'cleanup_expired_refresh_tokens',
+            'error': str(exc),
+            'timestamp': timezone.now().isoformat()
+        }
+
+
+@shared_task(bind=True, max_retries=3)
 def cleanup_old_refresh_tokens(self, days_old: int = 60) -> Dict[str, Any]:
     """
     Clean up old refresh tokens that are no longer needed.
@@ -335,3 +379,126 @@ def monitor_token_usage_patterns(self) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Token usage pattern monitoring failed: {str(e)}")
         raise
+
+@shared_task(bind=True, max_retries=3)
+def monitor_refresh_token_security(self) -> Dict[str, Any]:
+    """
+    Monitor refresh token usage for security anomalies.
+    
+    This task analyzes refresh token patterns to detect:
+    1. Unusual rotation frequencies
+    2. Geographic anomalies
+    3. Device fingerprint changes
+    4. Potential replay attacks
+    
+    Returns:
+        Dict with security monitoring results
+    """
+    try:
+        logger.info("Starting refresh token security monitoring")
+        
+        from django.db.models import Count, Q, F
+        from datetime import timedelta
+        
+        now = timezone.now()
+        last_hour = now - timedelta(hours=1)
+        last_24h = now - timedelta(hours=24)
+        
+        # Analyze recent refresh token activity
+        recent_rotations = RefreshToken.objects.filter(
+            created_at__gte=last_hour,
+            status='active'
+        ).count()
+        
+        # Find users with high rotation frequency (potential abuse)
+        high_rotation_users = RefreshToken.objects.filter(
+            created_at__gte=last_24h
+        ).values('user').annotate(
+            rotation_count=Count('id')
+        ).filter(rotation_count__gt=50)  # More than 50 rotations in 24h
+        
+        # Find tokens with suspicious device changes
+        suspicious_device_changes = RefreshToken.objects.filter(
+            created_at__gte=last_24h,
+            parent_token__isnull=False
+        ).exclude(
+            device_fingerprint=F('parent_token__device_fingerprint')
+        ).count()
+        
+        # Find tokens with rapid IP changes
+        rapid_ip_changes = RefreshToken.objects.filter(
+            created_at__gte=last_hour,
+            parent_token__isnull=False
+        ).exclude(
+            ip_address=F('parent_token__ip_address')
+        ).count()
+        
+        # Find tokens with high rotation counts (potential replay attacks)
+        high_rotation_tokens = RefreshToken.objects.filter(
+            rotation_count__gt=20,  # More than 20 rotations might indicate abuse
+            status='active'
+        ).count()
+        
+        security_stats = {
+            'recent_rotations_1h': recent_rotations,
+            'high_rotation_users': len(high_rotation_users),
+            'suspicious_device_changes_24h': suspicious_device_changes,
+            'rapid_ip_changes_1h': rapid_ip_changes,
+            'high_rotation_tokens': high_rotation_tokens,
+            'monitoring_timestamp': now.isoformat()
+        }
+        
+        # Alert if suspicious activity is detected
+        alert_triggered = False
+        if (len(high_rotation_users) > 0 or 
+            suspicious_device_changes > 10 or 
+            rapid_ip_changes > 5 or
+            high_rotation_tokens > 5):
+            
+            alert_triggered = True
+            logger.warning(f"Suspicious refresh token activity detected: {security_stats}")
+            
+            # Here you would integrate with your alerting system
+            # For example, send to Slack, PagerDuty, etc.
+            
+            # For high-risk scenarios, automatically revoke suspicious tokens
+            if rapid_ip_changes > 10 or high_rotation_tokens > 10:
+                logger.critical("Critical security alert: Automatically revoking suspicious tokens")
+                
+                # Revoke tokens with excessive rotations
+                excessive_rotation_tokens = RefreshToken.objects.filter(
+                    rotation_count__gt=50,
+                    status='active'
+                )
+                
+                for token in excessive_rotation_tokens:
+                    jwt_service.revoke_refresh_token_family(
+                        token.token_id, 
+                        'automatic_security_response'
+                    )
+        
+        security_stats['alert_triggered'] = alert_triggered
+        
+        logger.info(f"Refresh token security monitoring completed: {security_stats}")
+        
+        return {
+            'status': 'success',
+            'task': 'monitor_refresh_token_security',
+            'stats': security_stats,
+            'timestamp': now.isoformat()
+        }
+        
+    except Exception as exc:
+        logger.error(f"Error in monitor_refresh_token_security task: {str(exc)}")
+        
+        # Retry with exponential backoff
+        if self.request.retries < self.max_retries:
+            retry_delay = 60 * (2 ** self.request.retries)
+            raise self.retry(countdown=retry_delay, exc=exc)
+        
+        return {
+            'status': 'error',
+            'task': 'monitor_refresh_token_security',
+            'error': str(exc),
+            'timestamp': timezone.now().isoformat()
+        }

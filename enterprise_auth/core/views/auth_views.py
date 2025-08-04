@@ -190,6 +190,192 @@ def refresh_token(request: Request) -> Response:
 
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
+def check_token_refresh_needed(request: Request) -> Response:
+    """
+    Check if an access token needs to be refreshed.
+    
+    This endpoint helps client applications implement automatic token refresh
+    by providing detailed information about token expiration timing.
+    
+    Request Body:
+        access_token (str): Access token to check
+        threshold_minutes (int, optional): Minutes before expiration to trigger refresh (default: 5)
+        
+    Returns:
+        200: Token refresh information
+        400: Invalid request data
+    """
+    try:
+        access_token = request.data.get('access_token')
+        threshold_minutes = request.data.get('threshold_minutes', 5)
+        
+        if not access_token:
+            return Response(
+                {'error': 'Access token is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Get token refresh information
+        refresh_info = jwt_service.get_token_refresh_info(access_token)
+        
+        if not refresh_info:
+            return Response(
+                {'error': 'Invalid access token'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Check if refresh is needed based on threshold
+        should_refresh = jwt_service.should_refresh_token(access_token, threshold_minutes)
+        
+        response_data = {
+            'should_refresh': should_refresh,
+            'token_info': refresh_info,
+            'threshold_minutes': threshold_minutes,
+        }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Token refresh check error: {str(e)}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_refresh_token_family(request: Request) -> Response:
+    """
+    Get information about the current user's refresh token families.
+    
+    This endpoint provides information about token rotation chains
+    for security monitoring and debugging purposes.
+    
+    Query Parameters:
+        token_id (str, optional): Specific token ID to get family info for
+        
+    Returns:
+        200: Token family information
+        404: Token family not found
+    """
+    try:
+        token_id = request.query_params.get('token_id')
+        
+        if token_id:
+            # Get specific token family info
+            family_info = jwt_service.get_refresh_token_family_info(token_id)
+            
+            if not family_info:
+                return Response(
+                    {'error': 'Token family not found'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            return Response({'family_info': family_info}, status=status.HTTP_200_OK)
+        
+        else:
+            # Get all active refresh tokens for the user
+            from ..models.jwt import RefreshToken
+            
+            user_tokens = RefreshToken.objects.filter(
+                user=request.user,
+                status='active'
+            ).order_by('-created_at')
+            
+            families = []
+            for token in user_tokens:
+                family_info = jwt_service.get_refresh_token_family_info(token.token_id)
+                if family_info:
+                    family_info['device_info'] = {
+                        'device_id': token.device_id,
+                        'device_type': token.device_type,
+                        'browser': token.browser,
+                        'operating_system': token.operating_system,
+                        'ip_address': str(token.ip_address) if token.ip_address else None,
+                    }
+                    families.append(family_info)
+            
+            return Response({
+                'families': families,
+                'total_active_tokens': len(families)
+            }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Get token family error: {str(e)}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def revoke_refresh_token_family(request: Request) -> Response:
+    """
+    Revoke an entire refresh token family.
+    
+    This endpoint allows users to revoke all tokens in a rotation chain,
+    useful for security incidents or when a device is compromised.
+    
+    Request Body:
+        token_id (str): Any token ID in the family to revoke
+        reason (str, optional): Reason for revocation
+        
+    Returns:
+        200: Family revocation successful
+        400: Invalid request data
+        404: Token family not found
+    """
+    try:
+        token_id = request.data.get('token_id')
+        reason = request.data.get('reason', 'user_requested')
+        
+        if not token_id:
+            return Response(
+                {'error': 'Token ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Verify the token belongs to the requesting user
+        from ..models.jwt import RefreshToken
+        
+        try:
+            token_record = RefreshToken.objects.get(token_id=token_id, user=request.user)
+        except RefreshToken.DoesNotExist:
+            return Response(
+                {'error': 'Token not found or does not belong to user'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Revoke the entire family
+        revoked_count = jwt_service.revoke_refresh_token_family(token_id, reason)
+        
+        if revoked_count == 0:
+            return Response(
+                {'error': 'No tokens were revoked'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        logger.info(f"User {request.user.email} revoked token family {token_id[:8]}... "
+                   f"({revoked_count} tokens) with reason: {reason}")
+        
+        return Response({
+            'message': 'Token family revoked successfully',
+            'revoked_count': revoked_count,
+            'reason': reason
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(f"Revoke token family error: {str(e)}")
+        return Response(
+            {'error': 'Internal server error'},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def logout(request: Request) -> Response:
     """

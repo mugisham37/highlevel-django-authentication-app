@@ -621,16 +621,21 @@ class JWTService:
         # Store refresh token metadata for rotation tracking
         self._store_refresh_token_metadata(refresh_token_id, user.id, device_info.device_id, refresh_expires_at)
         
-        # Create RefreshToken database record for family tracking
-        self._create_refresh_token_record(
-            token_id=refresh_token_id,
-            user=user,
-            device_info=device_info,
-            scopes=scopes,
-            session_id=session_id,
-            issued_at=now,
-            expires_at=refresh_expires_at
-        )
+        # Create RefreshToken database record for family tracking (only for initial generation)
+        # For rotated tokens, the rotate() method handles this
+        try:
+            self._create_refresh_token_record(
+                token_id=refresh_token_id,
+                user=user,
+                device_info=device_info,
+                scopes=scopes,
+                session_id=session_id,
+                issued_at=now,
+                expires_at=refresh_expires_at
+            )
+        except Exception as e:
+            # If record already exists (e.g., from rotation), that's okay
+            logger.debug(f"RefreshToken record creation skipped: {str(e)}")
         
         return TokenPair(
             access_token=access_token,
@@ -751,6 +756,17 @@ class JWTService:
             validation_result = self._validate_refresh_token(refresh_token, device_info.device_fingerprint)
             
             if not validation_result.is_valid:
+                # Check if this is a device fingerprint mismatch (potential security issue)
+                if validation_result.error_message == "Device fingerprint mismatch":
+                    # Decode token to get claims for security handling
+                    claims = self._decode_jwt_token(refresh_token)
+                    if claims:
+                        # Get user for security handling
+                        try:
+                            user = UserProfile.objects.get(id=claims.user_id)
+                            self._handle_suspicious_refresh_activity(user, claims, device_info, 'device_fingerprint_mismatch')
+                        except UserProfile.DoesNotExist:
+                            pass
                 return None
             
             claims = validation_result.claims
@@ -785,23 +801,62 @@ class JWTService:
                 self._handle_suspicious_refresh_activity(user, claims, device_info, 'rotation_limit_exceeded')
                 return None
             
-            # Generate new token pair
-            new_token_pair = self.generate_token_pair(
-                user=user,
-                device_info=device_info,
+            # Generate new token pair without creating database record (we'll handle that with rotate)
+            now = timezone.now()
+            access_expires_at = now + self.access_token_lifetime
+            refresh_expires_at = now + self.refresh_token_lifetime
+            
+            # Generate unique token IDs
+            access_token_id = str(uuid.uuid4())
+            refresh_token_id = str(uuid.uuid4())
+            
+            # Create access token claims
+            access_claims = TokenClaims(
+                user_id=str(user.id),
+                email=user.email,
+                token_type=TokenType.ACCESS.value,
+                token_id=access_token_id,
+                device_id=device_info.device_id,
+                device_fingerprint=device_info.device_fingerprint,
+                issued_at=int(now.timestamp()),
+                expires_at=int(access_expires_at.timestamp()),
                 scopes=claims.scopes,
-                session_id=claims.session_id
+                session_id=claims.session_id,
+                ip_address=device_info.ip_address,
+                user_agent=device_info.user_agent,
             )
             
-            # Decode new refresh token to get its token_id
-            new_refresh_claims = self._decode_jwt_token(new_token_pair.refresh_token)
-            if not new_refresh_claims:
-                return None
+            # Create refresh token claims
+            refresh_claims = TokenClaims(
+                user_id=str(user.id),
+                email=user.email,
+                token_type=TokenType.REFRESH.value,
+                token_id=refresh_token_id,
+                device_id=device_info.device_id,
+                device_fingerprint=device_info.device_fingerprint,
+                issued_at=int(now.timestamp()),
+                expires_at=int(refresh_expires_at.timestamp()),
+                scopes=claims.scopes,
+                session_id=claims.session_id,
+                ip_address=device_info.ip_address,
+                user_agent=device_info.user_agent,
+            )
+            
+            # Generate tokens
+            access_token = self._create_jwt_token(access_claims)
+            refresh_token = self._create_jwt_token(refresh_claims)
+            
+            new_token_pair = TokenPair(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                access_token_expires_at=access_expires_at,
+                refresh_token_expires_at=refresh_expires_at,
+            )
             
             # Rotate the refresh token in database (creates new record and marks old as rotated)
             new_refresh_token_record = refresh_token_record.rotate(
-                new_token_id=new_refresh_claims.token_id,
-                new_expires_at=new_token_pair.refresh_token_expires_at
+                new_token_id=refresh_token_id,
+                new_expires_at=refresh_expires_at
             )
             
             # Update the new refresh token record with current device info
@@ -813,6 +868,9 @@ class JWTService:
             new_refresh_token_record.save(update_fields=[
                 'device_type', 'browser', 'operating_system', 'ip_address', 'user_agent'
             ])
+            
+            # Store refresh token metadata for tracking
+            self._store_refresh_token_metadata(refresh_token_id, user.id, device_info.device_id, refresh_expires_at)
             
             # Blacklist the old refresh token in Redis for immediate effect
             expires_at = datetime.fromtimestamp(claims.expires_at, tz=dt_timezone.utc)
@@ -1205,7 +1263,7 @@ class JWTService:
             logger.warning(f"Suspicious refresh token activity detected for user {user.email}: {reason}")
             
             # Revoke all refresh tokens for this user as a security measure
-            if reason in ['replay_attack', 'token_not_found']:
+            if reason in ['replay_attack', 'token_not_found', 'device_fingerprint_mismatch']:
                 # Get all active refresh tokens for the user
                 active_tokens = RefreshToken.objects.filter(
                     user=user,
@@ -1405,6 +1463,138 @@ class JWTService:
         except Exception as e:
             logger.error(f"Error getting token family info: {str(e)}")
             return None
+    
+    def should_refresh_token(self, access_token: str, threshold_minutes: int = 5) -> bool:
+        """
+        Check if an access token should be refreshed based on expiration time.
+        
+        This method helps client applications implement automatic token refresh
+        by checking if the token will expire within the threshold time.
+        
+        Args:
+            access_token: Access token to check
+            threshold_minutes: Minutes before expiration to trigger refresh
+            
+        Returns:
+            True if token should be refreshed
+        """
+        try:
+            claims = self._decode_jwt_token(access_token)
+            if not claims:
+                return True  # Invalid token should be refreshed
+            
+            expires_at = datetime.fromtimestamp(claims.expires_at, tz=dt_timezone.utc)
+            threshold_time = timezone.now() + timedelta(minutes=threshold_minutes)
+            
+            return expires_at <= threshold_time
+            
+        except Exception:
+            return True  # Error parsing token, should refresh
+    
+    def get_token_refresh_info(self, access_token: str) -> Optional[Dict[str, Any]]:
+        """
+        Get information about when a token should be refreshed.
+        
+        This method provides detailed information for client applications
+        to implement intelligent token refresh strategies.
+        
+        Args:
+            access_token: Access token to analyze
+            
+        Returns:
+            Dictionary with refresh timing information
+        """
+        try:
+            claims = self._decode_jwt_token(access_token)
+            if not claims:
+                return None
+            
+            now = timezone.now()
+            issued_at = datetime.fromtimestamp(claims.issued_at, tz=dt_timezone.utc)
+            expires_at = datetime.fromtimestamp(claims.expires_at, tz=dt_timezone.utc)
+            
+            total_lifetime = expires_at - issued_at
+            time_remaining = expires_at - now
+            time_elapsed = now - issued_at
+            
+            # Calculate refresh recommendations
+            should_refresh_5min = time_remaining <= timedelta(minutes=5)
+            should_refresh_2min = time_remaining <= timedelta(minutes=2)
+            should_refresh_1min = time_remaining <= timedelta(minutes=1)
+            
+            return {
+                'token_id': claims.token_id,
+                'issued_at': issued_at.isoformat(),
+                'expires_at': expires_at.isoformat(),
+                'total_lifetime_seconds': int(total_lifetime.total_seconds()),
+                'time_remaining_seconds': max(0, int(time_remaining.total_seconds())),
+                'time_elapsed_seconds': int(time_elapsed.total_seconds()),
+                'is_expired': time_remaining <= timedelta(0),
+                'should_refresh_5min': should_refresh_5min,
+                'should_refresh_2min': should_refresh_2min,
+                'should_refresh_1min': should_refresh_1min,
+                'refresh_recommended': should_refresh_5min,
+                'refresh_urgent': should_refresh_1min,
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting token refresh info: {str(e)}")
+            return None
+    
+    def cleanup_expired_refresh_tokens(self) -> Dict[str, int]:
+        """
+        Clean up expired refresh tokens from the database.
+        
+        This method should be called periodically to remove expired
+        refresh tokens and maintain database performance.
+        
+        Returns:
+            Dictionary with cleanup statistics
+        """
+        from ..models.jwt import RefreshToken
+        
+        try:
+            now = timezone.now()
+            
+            # Find expired tokens
+            expired_tokens = RefreshToken.objects.filter(
+                expires_at__lt=now,
+                status='active'
+            )
+            
+            expired_count = expired_tokens.count()
+            
+            # Mark as expired
+            expired_tokens.update(
+                status='expired',
+                revoked_at=now,
+                revocation_reason='expired'
+            )
+            
+            # Clean up very old tokens (older than 90 days)
+            old_cutoff = now - timedelta(days=90)
+            old_tokens = RefreshToken.objects.filter(
+                expires_at__lt=old_cutoff
+            )
+            
+            old_count = old_tokens.count()
+            old_tokens.delete()
+            
+            logger.info(f"Cleaned up {expired_count} expired tokens and {old_count} old tokens")
+            
+            return {
+                'expired_tokens_marked': expired_count,
+                'old_tokens_deleted': old_count,
+                'cleanup_timestamp': now.isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up expired refresh tokens: {str(e)}")
+            return {
+                'expired_tokens_marked': 0,
+                'old_tokens_deleted': 0,
+                'error': str(e)
+            }
 
 
 # Global JWT service instance

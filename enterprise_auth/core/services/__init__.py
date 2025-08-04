@@ -54,6 +54,10 @@ from .backup_codes_service import (
     BackupCodesService,
     backup_codes_service,
 )
+from .mfa_device_management_service import (
+    MFADeviceManagementService,
+    mfa_device_management_service,
+)
 
 __all__ = [
     'PasswordService',
@@ -99,4 +103,7 @@ __all__ = [
     # Backup codes service
     'BackupCodesService',
     'backup_codes_service',
+    # MFA device management service
+    'MFADeviceManagementService',
+    'mfa_device_management_service',
 ]

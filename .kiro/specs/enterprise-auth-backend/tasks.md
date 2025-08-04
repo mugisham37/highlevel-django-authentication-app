@@ -186,7 +186,8 @@
   - Add backup code usage logging and monitoring
   - _Requirements: 4.2, 4.5_
 
-- [ ] 23. Build MFA device management
+- [x] 23. Build MFA device management
+
   - Create MFA device registration and confirmation flow
   - Implement MFA device listing and management APIs
   - Add MFA device removal with proper security checks

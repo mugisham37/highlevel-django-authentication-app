@@ -43,6 +43,16 @@ from .views.mfa_views import (
     disable_mfa_device,
     mfa_status,
 )
+from .views.mfa_device_management_views import (
+    register_mfa_device,
+    confirm_mfa_device_registration,
+    list_mfa_devices as list_mfa_devices_detailed,
+    remove_mfa_device,
+    get_organization_mfa_policy,
+    enforce_organization_mfa_policy,
+    get_device_management_statistics,
+    bulk_device_operation,
+)
 from .views.backup_codes_views import (
     BackupCodesViewSet,
     BackupCodeValidationView,
@@ -102,6 +112,18 @@ urlpatterns = [
     path('mfa/devices/', list_mfa_devices, name='list_mfa_devices'),
     path('mfa/devices/disable/', disable_mfa_device, name='disable_mfa_device'),
     path('mfa/status/', mfa_status, name='mfa_status'),
+    
+    # MFA Device Management endpoints
+    path('mfa/devices/register/', register_mfa_device, name='register_mfa_device'),
+    path('mfa/devices/confirm/', confirm_mfa_device_registration, name='confirm_mfa_device_registration'),
+    path('mfa/devices/detailed/', list_mfa_devices_detailed, name='list_mfa_devices_detailed'),
+    path('mfa/devices/remove/', remove_mfa_device, name='remove_mfa_device'),
+    path('mfa/devices/bulk/', bulk_device_operation, name='bulk_device_operation'),
+    path('mfa/devices/statistics/', get_device_management_statistics, name='get_device_management_statistics'),
+    
+    # Organization MFA Policy endpoints
+    path('mfa/organization/policy/', get_organization_mfa_policy, name='get_organization_mfa_policy'),
+    path('mfa/organization/enforce/', enforce_organization_mfa_policy, name='enforce_organization_mfa_policy'),
     
 
     

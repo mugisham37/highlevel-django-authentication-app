@@ -5,6 +5,7 @@ This file contains settings common to all environments.
 
 import os
 import uuid
+import logging
 from pathlib import Path
 from decouple import config
 
@@ -40,13 +41,14 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'enterprise_auth.core.utils.correlation.CorrelationIDMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    # Custom middleware will be added here
+    'enterprise_auth.core.utils.error_handling.ErrorHandlingMiddleware',
 ]
 
 ROOT_URLCONF = 'enterprise_auth.urls'
@@ -403,19 +405,105 @@ TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
 TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default='')
 TWILIO_PHONE_NUMBER = config('TWILIO_PHONE_NUMBER', default='')
 
+# Logging configuration with correlation ID support
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {name} {process:d} {thread:d} [{correlation_id}] {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {name} [{correlation_id}] {message}',
+            'style': '{',
+        },
+        'json': {
+            'format': '{"level": "{levelname}", "time": "{asctime}", "name": "{name}", "correlation_id": "{correlation_id}", "message": "{message}"}',
+            'style': '{',
+        },
+    },
+    'filters': {
+        'correlation_id': {
+            '()': 'enterprise_auth.core.utils.correlation.CorrelationIDFilter',
+        },
+    },
+    'handlers': {
+        'console': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+            'filters': ['correlation_id'],
+        },
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': BASE_DIR / 'logs' / 'application.log',
+            'maxBytes': 1024*1024*10,  # 10MB
+            'backupCount': 5,
+            'formatter': 'json',
+            'filters': ['correlation_id'],
+        },
+        'security': {
+            'level': 'WARNING',
+            'class': 'logging.handlers.RotatingFileHandler',
+            'filename': BASE_DIR / 'logs' / 'security.log',
+            'maxBytes': 1024*1024*10,  # 10MB
+            'backupCount': 10,
+            'formatter': 'json',
+            'filters': ['correlation_id'],
+        },
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'enterprise_auth': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'enterprise_auth.security': {
+            'handlers': ['console', 'security'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'enterprise_auth.core.utils.error_handling': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'WARNING',
+    },
+}
+
 # Monitoring and observability
 SENTRY_DSN = config('SENTRY_DSN', default='')
 if SENTRY_DSN:
     import sentry_sdk
     from sentry_sdk.integrations.django import DjangoIntegration
     from sentry_sdk.integrations.celery import CeleryIntegration
+    from sentry_sdk.integrations.logging import LoggingIntegration
     
     sentry_sdk.init(
         dsn=SENTRY_DSN,
         integrations=[
             DjangoIntegration(auto_enabling=True),
             CeleryIntegration(monitor_beat_tasks=True),
+            LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
         ],
         traces_sample_rate=0.1,
         send_default_pii=True,
+        before_send=lambda event, hint: {
+            **event,
+            'extra': {
+                **event.get('extra', {}),
+                'correlation_id': get_correlation_id(),
+            }
+        } if 'get_correlation_id' in globals() else event,
     )

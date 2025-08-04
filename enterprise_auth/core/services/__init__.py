@@ -17,6 +17,27 @@ from .jwt_service import (
     TokenValidationResult,
     DeviceInfo,
 )
+from .oauth_provider import (
+    IOAuthProvider,
+    BaseOAuthProvider,
+    ProviderConfig,
+    TokenData,
+    NormalizedUserData,
+    AuthorizationRequest,
+)
+from .oauth_registry import (
+    OAuthProviderRegistry,
+    ProviderInfo,
+    oauth_registry,
+)
+from .oauth_config import (
+    OAuthConfigManager,
+    oauth_config_manager,
+)
+from .oauth_service import (
+    OAuthService,
+    oauth_service,
+)
 
 __all__ = [
     'PasswordService',
@@ -33,4 +54,21 @@ __all__ = [
     'TokenPair',
     'TokenValidationResult',
     'DeviceInfo',
+    # OAuth provider abstraction
+    'IOAuthProvider',
+    'BaseOAuthProvider',
+    'ProviderConfig',
+    'TokenData',
+    'NormalizedUserData',
+    'AuthorizationRequest',
+    # OAuth registry
+    'OAuthProviderRegistry',
+    'ProviderInfo',
+    'oauth_registry',
+    # OAuth configuration
+    'OAuthConfigManager',
+    'oauth_config_manager',
+    # OAuth service
+    'OAuthService',
+    'oauth_service',
 ]

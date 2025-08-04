@@ -6,7 +6,7 @@ throughout the authentication system, providing clear error categorization
 and consistent error handling.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class EnterpriseAuthError(Exception):
@@ -296,6 +296,105 @@ class OAuthCodeInvalidError(OAuthError):
     
     def __init__(self, message: str = "Invalid OAuth authorization code", **kwargs):
         super().__init__(message, error_code="OAUTH_CODE_INVALID", **kwargs)
+
+
+class OAuthProviderNotFoundError(OAuthError):
+    """Exception raised when OAuth provider is not found."""
+    
+    def __init__(
+        self,
+        message: str = "OAuth provider not found",
+        provider: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_PROVIDER_NOT_FOUND", **kwargs)
+
+
+class OAuthProviderNotConfiguredError(OAuthError):
+    """Exception raised when OAuth provider is not configured."""
+    
+    def __init__(
+        self,
+        message: str = "OAuth provider not configured",
+        provider: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_PROVIDER_NOT_CONFIGURED", **kwargs)
+
+
+class OAuthProviderDisabledError(OAuthError):
+    """Exception raised when OAuth provider is disabled."""
+    
+    def __init__(
+        self,
+        message: str = "OAuth provider is disabled",
+        provider: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_PROVIDER_DISABLED", **kwargs)
+
+
+class OAuthScopeError(OAuthError):
+    """Exception raised when OAuth scope is invalid or insufficient."""
+    
+    def __init__(
+        self,
+        message: str = "Invalid OAuth scope",
+        requested_scopes: Optional[List[str]] = None,
+        supported_scopes: Optional[List[str]] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if requested_scopes:
+            details['requested_scopes'] = requested_scopes
+        if supported_scopes:
+            details['supported_scopes'] = supported_scopes
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_SCOPE_ERROR", **kwargs)
+
+
+class OAuthTokenRefreshError(OAuthError):
+    """Exception raised when OAuth token refresh fails."""
+    
+    def __init__(
+        self,
+        message: str = "OAuth token refresh failed",
+        provider: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_TOKEN_REFRESH_ERROR", **kwargs)
+
+
+class OAuthUserInfoError(OAuthError):
+    """Exception raised when OAuth user info retrieval fails."""
+    
+    def __init__(
+        self,
+        message: str = "OAuth user info retrieval failed",
+        provider: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_USER_INFO_ERROR", **kwargs)
 
 
 # Security Exceptions

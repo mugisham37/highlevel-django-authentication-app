@@ -38,6 +38,10 @@ from .oauth_service import (
     OAuthService,
     oauth_service,
 )
+from .social_account_linking_service import (
+    SocialAccountLinkingService,
+    social_linking_service,
+)
 
 __all__ = [
     'PasswordService',
@@ -71,4 +75,7 @@ __all__ = [
     # OAuth service
     'OAuthService',
     'oauth_service',
+    # Social account linking service
+    'SocialAccountLinkingService',
+    'social_linking_service',
 ]

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Social Account Linking - {{ site_name }}</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+
+        .container {
+            background-color: #ffffff;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+            margin-bottom: 10px;
+        }
+
+        .title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .content {
+            margin-bottom: 30px;
+        }
+
+        .provider-info {
+            background-color: #f8f9fa;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 20px 0;
+            border-left: 4px solid #007bff;
+        }
+
+        .provider-info h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+            font-size: 16px;
+        }
+
+        .provider-info p {
+            margin: 5px 0;
+            color: #666;
+        }
+
+        .verify-button {
+            display: inline-block;
+            background-color: #007bff;
+            color: #ffffff;
+            text-decoration: none;
+            padding: 12px 30px;
+            border-radius: 6px;
+            font-weight: 600;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .verify-button:hover {
+            background-color: #0056b3;
+        }
+
+        .security-notice {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+
+        .security-notice h4 {
+            margin: 0 0 10px 0;
+            color: #856404;
+            font-size: 14px;
+        }
+
+        .security-notice p {
+            margin: 0;
+            color: #856404;
+            font-size: 13px;
+        }
+
+        .footer {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+        }
+
+        .footer a {
+            color: #007bff;
+            text-decoration: none;
+        }
+
+        .token-info {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+            color: #666;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">{{ site_name }}</div>
+            <h1 class="title">Verify Social Account Linking</h1>
+        </div>
+
+        <div class="content">
+            <p>Hello {{ user.get_full_name|default:user.email }},</p>
+
+            <p>You have requested to link your <strong>{{ provider_name }}</strong> account to your {{ site_name }}
+                profile. To complete this process and ensure the security of your account, please verify this linking
+                request.</p>
+
+            <div class="provider-info">
+                <h3>{{ provider_name }} Account Details</h3>
+                {% if provider_email %}
+                <p><strong>Email:</strong> {{ provider_email }}</p>
+                {% endif %}
+                {% if provider_username %}
+                <p><strong>Username:</strong> {{ provider_username }}</p>
+                {% endif %}
+                <p><strong>Your Account:</strong> {{ user.email }}</p>
+            </div>
+
+            <div style="text-align: center;">
+                <a href="{{ verification_url }}" class="verify-button">Verify Account Linking</a>
+            </div>
+
+            <div class="security-notice">
+                <h4>🔒 Security Notice</h4>
+                <p>This verification step helps protect your account from unauthorized linking attempts. If you did not
+                    request to link this {{ provider_name }} account, please ignore this email and consider changing
+                    your password.</p>
+            </div>
+
+            <p>If the button above doesn't work, you can copy and paste the following link into your browser:</p>
+            <div class="token-info">{{ verification_url }}</div>
+
+            <p><strong>Important:</strong> This verification link will expire in 1 hour for security reasons. If you
+                need a new link, please initiate the linking process again.</p>
+
+            <p>If you have any questions or concerns, please don't hesitate to contact our support team.</p>
+
+            <p>Best regards,<br>The {{ site_name }} Team</p>
+        </div>
+
+        <div class="footer">
+            <p>This email was sent to {{ user.email }} because you requested to link a social account.</p>
+            <p>If you have questions, contact us at <a href="mailto:{{ support_email }}">{{ support_email }}</a></p>
+            <p>&copy; {{ site_name }}. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+
+</html>

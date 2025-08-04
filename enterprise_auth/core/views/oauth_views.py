@@ -25,6 +25,9 @@ from ..exceptions import (
     OAuthProviderNotConfiguredError,
     OAuthProviderDisabledError,
     OAuthScopeError,
+    ValidationError,
+    TokenInvalidError,
+    TokenExpiredError,
 )
 from ..models.user import UserProfile, UserIdentity
 from ..services.oauth_service import oauth_service
@@ -391,32 +394,25 @@ def list_user_oauth_identities(request: Request) -> Response:
     """
     List OAuth identities linked to the authenticated user.
     
-    Returns a list of all OAuth provider identities linked to the user's account.
+    Returns a list of all OAuth provider identities linked to the user's account
+    with additional metadata about unlinking capabilities.
     
     Returns:
         200: List of linked OAuth identities
         401: User not authenticated
     """
     try:
-        identities = oauth_service.get_user_identities(request.user)
+        # Import the social linking service
+        from ..services.social_account_linking_service import social_linking_service
         
-        identity_data = []
-        for identity in identities:
-            identity_data.append({
-                'id': str(identity.id),
-                'provider': identity.provider,
-                'provider_user_id': identity.provider_user_id,
-                'provider_username': identity.provider_username,
-                'provider_email': identity.provider_email,
-                'is_primary': identity.is_primary,
-                'is_verified': identity.is_verified,
-                'linked_at': identity.linked_at.isoformat(),
-                'last_used': identity.last_used.isoformat(),
-            })
+        # Get linked accounts with enhanced information
+        linked_accounts = social_linking_service.get_user_linked_accounts(request.user)
         
         return Response({
-            'identities': identity_data,
-            'count': len(identity_data)
+            'identities': linked_accounts,
+            'count': len(linked_accounts),
+            'user_has_password': bool(request.user.password),
+            'can_unlink_all': len(linked_accounts) > 1 or bool(request.user.password)
         }, status=status.HTTP_200_OK)
         
     except Exception as e:
@@ -438,6 +434,7 @@ def link_oauth_identity(request: Request, provider_name: str) -> Response:
     
     This endpoint allows users to link additional OAuth provider accounts
     to their existing user account for multiple authentication options.
+    Uses secure account linking with email verification and anti-takeover protection.
     
     Args:
         provider_name: Name of the OAuth provider to link
@@ -445,9 +442,10 @@ def link_oauth_identity(request: Request, provider_name: str) -> Response:
     Request Body:
         code (str): Authorization code from OAuth callback
         state (str): State parameter for CSRF verification
+        require_email_verification (bool, optional): Override email verification requirement
         
     Returns:
-        200: Successfully linked OAuth identity
+        200: Successfully linked OAuth identity or verification required
         400: Invalid request data or state mismatch
         404: OAuth provider not found
         409: OAuth identity already linked to another account
@@ -455,9 +453,13 @@ def link_oauth_identity(request: Request, provider_name: str) -> Response:
         500: Internal server error
     """
     try:
+        # Import the social linking service
+        from ..services.social_account_linking_service import social_linking_service
+        
         # Extract callback parameters
         code = request.data.get('code')
         state = request.data.get('state')
+        require_email_verification = request.data.get('require_email_verification')
         
         if not code or not state:
             return Response({
@@ -487,69 +489,97 @@ def link_oauth_identity(request: Request, provider_name: str) -> Response:
         request.session.pop(f'oauth_state_{provider_name}', None)
         request.session.pop(f'oauth_code_verifier_{provider_name}', None)
         
-        # Check if this OAuth identity is already linked to another user
-        existing_user = oauth_service.find_user_by_provider_identity(
+        # Convert user_data to dictionary format
+        provider_user_data = {
+            'provider_user_id': user_data.provider_user_id,
+            'email': user_data.email,
+            'username': user_data.username,
+            'first_name': user_data.first_name,
+            'last_name': user_data.last_name,
+            'profile_picture_url': user_data.profile_picture_url,
+            'verified_email': user_data.verified_email,
+            'locale': user_data.locale,
+            'timezone': user_data.timezone,
+        }
+        
+        # Convert token_data to dictionary format
+        token_dict = {
+            'access_token': token_data.access_token,
+            'refresh_token': token_data.refresh_token,
+            'expires_in': token_data.expires_in,
+            'token_type': token_data.token_type,
+            'scope': token_data.scope,
+        }
+        
+        # Initiate secure account linking
+        result = social_linking_service.initiate_account_linking(
+            user=request.user,
             provider_name=provider_name,
-            provider_user_id=user_data.provider_user_id
+            provider_user_data=provider_user_data,
+            token_data=token_dict,
+            require_email_verification=require_email_verification
         )
         
-        if existing_user and existing_user != request.user:
-            logger.warning(
-                f"OAuth identity already linked to another user",
-                extra={
-                    'provider': provider_name,
-                    'provider_user_id': user_data.provider_user_id,
-                    'current_user_id': request.user.id,
-                    'existing_user_id': existing_user.id,
-                }
-            )
-            return Response({
-                'error': 'This OAuth account is already linked to another user',
-                'provider': provider_name
-            }, status=status.HTTP_409_CONFLICT)
-        
-        # Link OAuth identity to current user
-        with transaction.atomic():
-            identity = oauth_service.link_user_identity(
-                user=request.user,
-                provider_name=provider_name,
-                token_data=token_data,
-                user_data=user_data,
-                is_primary=False  # Additional identities are not primary by default
-            )
-        
         logger.info(
-            f"Successfully linked OAuth identity for {provider_name}",
+            f"Account linking initiated for {provider_name}",
             extra={
                 'provider': provider_name,
                 'user_id': request.user.id,
-                'identity_id': identity.id,
+                'status': result['status'],
             }
         )
         
-        return Response({
-            'message': f'Successfully linked {provider_name} account',
-            'identity': {
-                'id': str(identity.id),
-                'provider': identity.provider,
-                'provider_user_id': identity.provider_user_id,
-                'provider_username': identity.provider_username,
-                'provider_email': identity.provider_email,
-                'is_primary': identity.is_primary,
-                'is_verified': identity.is_verified,
-                'linked_at': identity.linked_at.isoformat(),
-            }
-        }, status=status.HTTP_200_OK)
+        # Return appropriate response based on status
+        if result['status'] == 'verification_required':
+            return Response({
+                'message': result['message'],
+                'status': result['status'],
+                'verification_token': result['verification_token'],
+                'expires_at': result['expires_at'],
+                'provider': result['provider']
+            }, status=status.HTTP_200_OK)
+        elif result['status'] == 'already_linked':
+            return Response({
+                'message': result['message'],
+                'status': result['status'],
+                'identity_id': result['identity_id'],
+                'linked_at': result['linked_at']
+            }, status=status.HTTP_200_OK)
+        else:  # status == 'linked'
+            return Response({
+                'message': result['message'],
+                'status': result['status'],
+                'identity': result['identity']
+            }, status=status.HTTP_200_OK)
         
     except OAuthError as e:
         logger.error(
             f"Failed to link OAuth identity for {provider_name}: {e}",
             extra={'provider': provider_name, 'user_id': request.user.id, 'error': str(e)}
         )
+        
+        # Handle specific OAuth errors
+        if 'already linked' in str(e):
+            return Response({
+                'error': 'This OAuth account is already linked to another user',
+                'provider': provider_name
+            }, status=status.HTTP_409_CONFLICT)
+        
         return Response({
             'error': 'Failed to link OAuth account',
             'provider': provider_name,
             'details': str(e)
+        }, status=status.HTTP_400_BAD_REQUEST)
+        
+    except ValidationError as e:
+        logger.warning(
+            f"Validation error linking OAuth identity for {provider_name}: {e}",
+            extra={'provider': provider_name, 'user_id': request.user.id, 'error': str(e)}
+        )
+        return Response({
+            'error': str(e),
+            'provider': provider_name,
+            'details': getattr(e, 'details', {})
         }, status=status.HTTP_400_BAD_REQUEST)
         
     except Exception as e:
@@ -571,37 +601,65 @@ def unlink_oauth_identity(request: Request, provider_name: str) -> Response:
     Unlink an OAuth identity from the authenticated user's account.
     
     This endpoint allows users to remove OAuth provider accounts
-    from their user account.
+    from their user account with proper cleanup and validation.
     
     Args:
         provider_name: Name of the OAuth provider to unlink
         
+    Query Parameters:
+        identity_id (str, optional): Specific identity ID to unlink
+        
     Returns:
         200: Successfully unlinked OAuth identity
+        400: Cannot unlink (validation error)
         404: OAuth identity not found
         500: Internal server error
     """
     try:
-        # Unlink the OAuth identity
-        success = oauth_service.unlink_user_identity(
+        # Import the social linking service
+        from ..services.social_account_linking_service import social_linking_service
+        
+        # Get optional identity ID from query parameters
+        identity_id = request.query_params.get('identity_id')
+        
+        # Unlink the OAuth identity with proper cleanup
+        result = social_linking_service.unlink_social_account(
             user=request.user,
-            provider_name=provider_name
+            provider_name=provider_name,
+            identity_id=identity_id
         )
         
-        if success:
+        if result['status'] == 'unlinked':
             logger.info(
                 f"Successfully unlinked OAuth identity for {provider_name}",
-                extra={'provider': provider_name, 'user_id': request.user.id}
+                extra={
+                    'provider': provider_name, 
+                    'user_id': request.user.id,
+                    'identity_id': result['unlinked_identity']['id']
+                }
             )
             return Response({
-                'message': f'Successfully unlinked {provider_name} account',
-                'provider': provider_name
+                'message': result['message'],
+                'status': result['status'],
+                'unlinked_identity': result['unlinked_identity']
             }, status=status.HTTP_200_OK)
-        else:
+        else:  # status == 'not_found'
             return Response({
-                'error': f'No {provider_name} account found to unlink',
-                'provider': provider_name
+                'error': result['message'],
+                'provider': provider_name,
+                'status': result['status']
             }, status=status.HTTP_404_NOT_FOUND)
+        
+    except ValidationError as e:
+        logger.warning(
+            f"Validation error unlinking OAuth identity for {provider_name}: {e}",
+            extra={'provider': provider_name, 'user_id': request.user.id, 'error': str(e)}
+        )
+        return Response({
+            'error': str(e),
+            'provider': provider_name,
+            'details': getattr(e, 'details', {})
+        }, status=status.HTTP_400_BAD_REQUEST)
         
     except Exception as e:
         logger.error(
@@ -611,6 +669,137 @@ def unlink_oauth_identity(request: Request, provider_name: str) -> Response:
         return Response({
             'error': 'Failed to unlink OAuth account',
             'provider': provider_name,
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def verify_social_linking(request: Request) -> Response:
+    """
+    Verify social account linking using verification token.
+    
+    This endpoint completes the social account linking process after
+    email verification has been completed.
+    
+    Request Body:
+        linking_token (str): Linking verification token from email
+        
+    Returns:
+        200: Successfully completed account linking
+        400: Invalid or expired token
+        500: Internal server error
+    """
+    try:
+        # Import the social linking service
+        from ..services.social_account_linking_service import social_linking_service
+        
+        # Extract linking token
+        linking_token = request.data.get('linking_token')
+        
+        if not linking_token:
+            return Response({
+                'error': 'Missing required parameter: linking_token'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Verify and complete linking
+        result = social_linking_service.verify_and_complete_linking(
+            user_id=str(request.user.id),
+            linking_token=linking_token
+        )
+        
+        logger.info(
+            f"Social account linking verified and completed",
+            extra={
+                'user_id': request.user.id,
+                'identity_id': result.get('identity', {}).get('id')
+            }
+        )
+        
+        return Response({
+            'message': result['message'],
+            'status': result['status'],
+            'identity': result['identity']
+        }, status=status.HTTP_200_OK)
+        
+    except TokenInvalidError as e:
+        logger.warning(
+            f"Invalid linking token: {e}",
+            extra={'user_id': request.user.id}
+        )
+        return Response({
+            'error': str(e),
+            'code': 'INVALID_TOKEN'
+        }, status=status.HTTP_400_BAD_REQUEST)
+        
+    except TokenExpiredError as e:
+        logger.warning(
+            f"Expired linking token: {e}",
+            extra={'user_id': request.user.id}
+        )
+        return Response({
+            'error': str(e),
+            'code': 'TOKEN_EXPIRED'
+        }, status=status.HTTP_400_BAD_REQUEST)
+        
+    except Exception as e:
+        logger.error(
+            f"Failed to verify social linking: {e}",
+            extra={'user_id': request.user.id, 'error': str(e)}
+        )
+        return Response({
+            'error': 'Failed to verify social account linking',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_social_linking_statistics(request: Request) -> Response:
+    """
+    Get social account linking statistics for the authenticated user.
+    
+    Returns statistics about the user's linked accounts and system limits.
+    
+    Returns:
+        200: Social linking statistics
+        500: Internal server error
+    """
+    try:
+        # Import the social linking service
+        from ..services.social_account_linking_service import social_linking_service
+        
+        # Get user's linked accounts
+        linked_accounts = social_linking_service.get_user_linked_accounts(request.user)
+        
+        # Calculate statistics
+        provider_counts = {}
+        for account in linked_accounts:
+            provider = account['provider']
+            provider_counts[provider] = provider_counts.get(provider, 0) + 1
+        
+        return Response({
+            'user_statistics': {
+                'total_linked_accounts': len(linked_accounts),
+                'provider_breakdown': provider_counts,
+                'has_password': bool(request.user.password),
+                'can_link_more': len(linked_accounts) < social_linking_service.max_total_identities
+            },
+            'system_limits': {
+                'max_identities_per_provider': social_linking_service.max_identities_per_provider,
+                'max_total_identities': social_linking_service.max_total_identities,
+                'require_email_verification': social_linking_service.require_email_verification
+            },
+            'linked_accounts': linked_accounts
+        }, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(
+            f"Failed to get social linking statistics: {e}",
+            extra={'user_id': request.user.id, 'error': str(e)}
+        )
+        return Response({
+            'error': 'Failed to retrieve social linking statistics',
             'details': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 

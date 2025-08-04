@@ -413,6 +413,74 @@ class OAuthTokenExpiredError(OAuthError):
         super().__init__(message, error_code="OAUTH_TOKEN_EXPIRED", **kwargs)
 
 
+class OAuthAccountAlreadyLinkedError(OAuthError):
+    """Exception raised when OAuth account is already linked to another user."""
+    
+    def __init__(
+        self,
+        message: str = "OAuth account is already linked to another user",
+        provider: Optional[str] = None,
+        provider_user_id: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        if provider_user_id:
+            details['provider_user_id'] = provider_user_id
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_ACCOUNT_ALREADY_LINKED", **kwargs)
+
+
+class OAuthAccountTakeoverAttemptError(OAuthError):
+    """Exception raised when a potential account takeover attempt is detected."""
+    
+    def __init__(
+        self,
+        message: str = "Potential account takeover attempt detected",
+        provider: Optional[str] = None,
+        risk_indicators: Optional[List[str]] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        if risk_indicators:
+            details['risk_indicators'] = risk_indicators
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_ACCOUNT_TAKEOVER_ATTEMPT", **kwargs)
+
+
+class OAuthLinkingTokenInvalidError(OAuthError):
+    """Exception raised when OAuth linking token is invalid."""
+    
+    def __init__(
+        self,
+        message: str = "Invalid OAuth linking token",
+        **kwargs
+    ):
+        super().__init__(message, error_code="OAUTH_LINKING_TOKEN_INVALID", **kwargs)
+
+
+class OAuthMaxIdentitiesExceededError(OAuthError):
+    """Exception raised when maximum number of linked identities is exceeded."""
+    
+    def __init__(
+        self,
+        message: str = "Maximum number of linked accounts exceeded",
+        max_allowed: Optional[int] = None,
+        current_count: Optional[int] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if max_allowed is not None:
+            details['max_allowed'] = max_allowed
+        if current_count is not None:
+            details['current_count'] = current_count
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_MAX_IDENTITIES_EXCEEDED", **kwargs)
+
+
 # Security Exceptions
 class SecurityError(EnterpriseAuthError):
     """Base exception for security-related errors."""

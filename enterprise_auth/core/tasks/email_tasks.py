@@ -269,6 +269,76 @@ def send_security_alert_email(
         return False
 
 
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def send_social_linking_verification_email(
+    self, 
+    user_id: str, 
+    provider_name: str, 
+    linking_token: str,
+    provider_email: str = '',
+    provider_username: str = ''
+) -> bool:
+    """
+    Send social account linking verification email to user.
+    
+    Args:
+        user_id: User's ID
+        provider_name: OAuth provider name
+        linking_token: Linking verification token
+        provider_email: Email from OAuth provider
+        provider_username: Username from OAuth provider
+        
+    Returns:
+        True if email was sent successfully, False otherwise
+    """
+    try:
+        # Get user
+        user = UserProfile.objects.get(id=user_id)
+        
+        # Prepare email context
+        context = {
+            'user': user,
+            'provider_name': provider_name.title(),
+            'provider_email': provider_email,
+            'provider_username': provider_username,
+            'linking_token': linking_token,
+            'verification_url': f"{settings.FRONTEND_URL}/verify-social-linking?user_id={user_id}&token={linking_token}",
+            'site_name': getattr(settings, 'SITE_NAME', 'Enterprise Auth'),
+            'support_email': getattr(settings, 'SUPPORT_EMAIL', settings.DEFAULT_FROM_EMAIL),
+        }
+        
+        # Render email templates
+        subject = _('Verify social account linking')
+        html_message = render_to_string('emails/social_linking_verification_email.html', context)
+        plain_message = strip_tags(html_message)
+        
+        # Send email
+        send_mail(
+            subject=subject,
+            message=plain_message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[user.email],
+            html_message=html_message,
+            fail_silently=False,
+        )
+        
+        logger.info(f"Social linking verification email sent successfully to {user.email} for {provider_name}")
+        return True
+        
+    except UserProfile.DoesNotExist:
+        logger.error(f"User with ID {user_id} not found")
+        return False
+        
+    except Exception as exc:
+        logger.error(f"Failed to send social linking verification email to user {user_id}: {exc}")
+        
+        # Retry the task
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+        
+        return False
+
+
 @shared_task
 def cleanup_unverified_users() -> int:
     """

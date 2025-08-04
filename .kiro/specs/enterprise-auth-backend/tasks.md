@@ -136,7 +136,7 @@
   - Create Microsoft user data normalization
   - _Requirements: 3.1, 3.2, 3.7_
 
-- [ ] 17. Create social account linking system
+- [x] 17. Create social account linking system
 
   - Implement secure account linking with email verification
   - Create account linking API endpoints with anti-takeover protection

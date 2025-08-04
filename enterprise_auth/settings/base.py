@@ -376,12 +376,25 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 21600.0,  # Every 6 hours
         'options': {'queue': 'cache_warming'}
     },
+    
+    # SMS-related tasks
+    'cleanup-expired-sms-codes': {
+        'task': 'enterprise_auth.core.tasks.sms_tasks.cleanup_expired_sms_codes',
+        'schedule': 3600.0,  # Every hour
+        'options': {'queue': 'maintenance'}
+    },
+    'bulk-sms-status-check': {
+        'task': 'enterprise_auth.core.tasks.sms_tasks.bulk_sms_delivery_status_check',
+        'schedule': 1800.0,  # Every 30 minutes
+        'options': {'queue': 'sms_processing'}
+    },
 }
 
 # Celery task routing
 CELERY_TASK_ROUTES = {
     'enterprise_auth.core.tasks.cache_tasks.*': {'queue': 'cache_warming'},
     'enterprise_auth.core.tasks.cache_tasks.cleanup_*': {'queue': 'maintenance'},
+    'enterprise_auth.core.tasks.sms_tasks.*': {'queue': 'sms_processing'},
 }
 
 # Celery worker configuration
@@ -413,7 +426,18 @@ RATE_LIMIT_PER_USER = config('RATE_LIMIT_PER_USER', default='1000/hour')
 
 # MFA Configuration
 MFA_TOTP_ISSUER = config('MFA_TOTP_ISSUER', default='Enterprise Auth')
+MFA_TOTP_WINDOW = config('MFA_TOTP_WINDOW', default=1, cast=int)  # 30-second windows
 MFA_BACKUP_CODES_COUNT = config('MFA_BACKUP_CODES_COUNT', default=10, cast=int)
+MFA_RATE_LIMIT_WINDOW = config('MFA_RATE_LIMIT_WINDOW', default=300, cast=int)  # 5 minutes
+MFA_MAX_ATTEMPTS_PER_WINDOW = config('MFA_MAX_ATTEMPTS_PER_WINDOW', default=5, cast=int)
+
+# SMS MFA Configuration
+MFA_SMS_CODE_LENGTH = config('MFA_SMS_CODE_LENGTH', default=6, cast=int)
+MFA_SMS_CODE_EXPIRY_MINUTES = config('MFA_SMS_CODE_EXPIRY_MINUTES', default=5, cast=int)
+MFA_SMS_RATE_LIMIT_WINDOW = config('MFA_SMS_RATE_LIMIT_WINDOW', default=3600, cast=int)  # 1 hour
+MFA_MAX_SMS_PER_WINDOW = config('MFA_MAX_SMS_PER_WINDOW', default=5, cast=int)
+MFA_SMS_RETRY_ATTEMPTS = config('MFA_SMS_RETRY_ATTEMPTS', default=3, cast=int)
+MFA_SMS_RETRY_DELAY_SECONDS = config('MFA_SMS_RETRY_DELAY_SECONDS', default=30, cast=int)
 
 # OAuth Configuration
 OAUTH_PROVIDERS = {

@@ -162,7 +162,7 @@
   - Add TOTP device management and recovery
   - _Requirements: 4.1, 4.4_
 
-- [-] 20. Build SMS-based MFA system
+- [x] 20. Build SMS-based MFA system
 
   - Integrate Twilio SDK for SMS delivery
   - Implement SMS verification code generation and validation

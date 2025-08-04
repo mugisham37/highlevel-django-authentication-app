@@ -96,4 +96,7 @@ urlpatterns = [
     path('mfa/devices/', list_mfa_devices, name='list_mfa_devices'),
     path('mfa/devices/disable/', disable_mfa_device, name='disable_mfa_device'),
     path('mfa/status/', mfa_status, name='mfa_status'),
+    
+    # SMS MFA endpoints
+    path('mfa/sms/', include('enterprise_auth.core.urls.sms_mfa_urls')),
 ]

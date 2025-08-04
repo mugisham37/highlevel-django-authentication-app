@@ -42,6 +42,10 @@ from .social_account_linking_service import (
     SocialAccountLinkingService,
     social_linking_service,
 )
+from .sms_mfa_service import (
+    SMSMFAService,
+    sms_mfa_service,
+)
 
 __all__ = [
     'PasswordService',
@@ -78,4 +82,7 @@ __all__ = [
     # Social account linking service
     'SocialAccountLinkingService',
     'social_linking_service',
+    # SMS MFA service
+    'SMSMFAService',
+    'sms_mfa_service',
 ]

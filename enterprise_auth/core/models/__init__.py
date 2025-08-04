@@ -4,6 +4,7 @@ Core models package for enterprise authentication system.
 
 from .base import BaseModel, AuditableModel, SoftDeleteModel, TimestampedModel
 from .user import UserProfile, UserIdentity
+from .audit import AuditLog, ProfileChangeHistory
 
 __all__ = [
     'BaseModel',
@@ -12,4 +13,6 @@ __all__ = [
     'TimestampedModel',
     'UserProfile',
     'UserIdentity',
+    'AuditLog',
+    'ProfileChangeHistory',
 ]

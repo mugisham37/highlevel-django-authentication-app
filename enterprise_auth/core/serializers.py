@@ -14,7 +14,7 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from .models import UserProfile, UserIdentity
+from .models import UserProfile, UserIdentity, AuditLog, ProfileChangeHistory
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -807,3 +807,215 @@ class PasswordStrengthCheckSerializer(serializers.Serializer):
             Password value
         """
         return value
+
+
+class AuditLogSerializer(serializers.ModelSerializer):
+    """
+    Serializer for audit log entries.
+    
+    Used for displaying audit logs to users for transparency
+    and compliance purposes.
+    """
+    
+    user_email = serializers.CharField(read_only=True)
+    changes_summary = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = AuditLog
+        fields = [
+            'id',
+            'event_type',
+            'event_description',
+            'severity',
+            'user_email',
+            'ip_address',
+            'user_agent',
+            'request_id',
+            'session_id',
+            'old_values',
+            'new_values',
+            'changes_summary',
+            'metadata',
+            'created_at',
+        ]
+        read_only_fields = [
+            'id',
+            'event_type',
+            'event_description',
+            'severity',
+            'user_email',
+            'ip_address',
+            'user_agent',
+            'request_id',
+            'session_id',
+            'old_values',
+            'new_values',
+            'metadata',
+            'created_at',
+        ]
+    
+    def get_changes_summary(self, obj: AuditLog) -> Dict[str, Any]:
+        """
+        Get a summary of changes made in this audit log.
+        
+        Args:
+            obj: AuditLog instance
+            
+        Returns:
+            Dictionary with change summary
+        """
+        return obj.get_changes_summary()
+
+
+class ProfileChangeHistorySerializer(serializers.ModelSerializer):
+    """
+    Serializer for profile change history entries.
+    
+    Used for displaying detailed profile change history
+    to users for transparency.
+    """
+    
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    changed_by_email = serializers.CharField(source='changed_by.email', read_only=True)
+    
+    class Meta:
+        model = ProfileChangeHistory
+        fields = [
+            'id',
+            'user_email',
+            'changed_by_email',
+            'field_name',
+            'old_value',
+            'new_value',
+            'ip_address',
+            'user_agent',
+            'request_id',
+            'created_at',
+        ]
+        read_only_fields = [
+            'id',
+            'user_email',
+            'changed_by_email',
+            'field_name',
+            'old_value',
+            'new_value',
+            'ip_address',
+            'user_agent',
+            'request_id',
+            'created_at',
+        ]
+
+
+class DataExportSerializer(serializers.Serializer):
+    """
+    Serializer for data export requests (GDPR compliance).
+    
+    Handles requests for user data export.
+    """
+    
+    include_sensitive = serializers.BooleanField(
+        default=False,
+        help_text="Whether to include sensitive audit logs in export"
+    )
+    export_format = serializers.ChoiceField(
+        choices=[('json', 'JSON'), ('csv', 'CSV')],
+        default='json',
+        help_text="Format for data export"
+    )
+    
+    def validate_include_sensitive(self, value: bool) -> bool:
+        """
+        Validate sensitive data inclusion request.
+        
+        Args:
+            value: Whether to include sensitive data
+            
+        Returns:
+            Validated value
+        """
+        # Only allow sensitive data export for the user themselves
+        request = self.context.get('request')
+        if value and request and not request.user.is_staff:
+            # Regular users can only export their own non-sensitive data
+            return False
+        return value
+
+
+class ProfileUpdateAuditSerializer(serializers.Serializer):
+    """
+    Serializer for profile update audit information.
+    
+    Used internally for audit logging of profile changes.
+    """
+    
+    old_values = serializers.JSONField(
+        help_text="Previous values before update"
+    )
+    new_values = serializers.JSONField(
+        help_text="New values after update"
+    )
+    changed_fields = serializers.ListField(
+        child=serializers.CharField(),
+        help_text="List of fields that were changed"
+    )
+    request_info = serializers.JSONField(
+        help_text="Request metadata for audit trail"
+    )
+    
+    def validate_old_values(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate old values data.
+        
+        Args:
+            value: Old values dictionary
+            
+        Returns:
+            Validated old values
+        """
+        # Filter out sensitive fields
+        sensitive_fields = {'password', 'password_reset_token', 'email_verification_token'}
+        return {k: v for k, v in value.items() if k not in sensitive_fields}
+    
+    def validate_new_values(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Validate new values data.
+        
+        Args:
+            value: New values dictionary
+            
+        Returns:
+            Validated new values
+        """
+        # Filter out sensitive fields
+        sensitive_fields = {'password', 'password_reset_token', 'email_verification_token'}
+        return {k: v for k, v in value.items() if k not in sensitive_fields}
+
+
+class ComplianceReportSerializer(serializers.Serializer):
+    """
+    Serializer for compliance reporting data.
+    
+    Used for generating compliance reports for audits.
+    """
+    
+    user_id = serializers.UUIDField(read_only=True)
+    user_email = serializers.EmailField(read_only=True)
+    report_type = serializers.CharField(read_only=True)
+    generated_at = serializers.DateTimeField(read_only=True)
+    
+    # Profile data
+    profile_created_at = serializers.DateTimeField(read_only=True)
+    profile_updated_at = serializers.DateTimeField(read_only=True)
+    email_verified = serializers.BooleanField(read_only=True)
+    phone_verified = serializers.BooleanField(read_only=True)
+    
+    # Audit statistics
+    total_audit_logs = serializers.IntegerField(read_only=True)
+    total_profile_changes = serializers.IntegerField(read_only=True)
+    last_login = serializers.DateTimeField(read_only=True)
+    last_profile_update = serializers.DateTimeField(read_only=True)
+    
+    # Compliance flags
+    gdpr_compliant = serializers.BooleanField(read_only=True)
+    data_retention_compliant = serializers.BooleanField(read_only=True)
+    audit_trail_complete = serializers.BooleanField(read_only=True)

@@ -60,7 +60,8 @@
   - Implement resend verification email functionality
   - _Requirements: 1.1, 1.2_
 
-- [ ] 8. Build user profile management APIs
+- [x] 8. Build user profile management APIs
+
   - Create user profile retrieval and update endpoints
   - Implement profile field validation and sanitization
   - Create user profile serializers with proper field exposure

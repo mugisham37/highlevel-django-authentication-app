@@ -29,6 +29,8 @@ from ..serializers import (
     PasswordResetConfirmSerializer,
     PasswordStrengthCheckSerializer,
 )
+from ..services.audit_service import audit_service
+from ..utils.request_utils import extract_request_info
 
 User = get_user_model()
 
@@ -257,10 +259,31 @@ class UserProfileViewSet(GenericViewSet, RetrieveModelMixin, UpdateModelMixin):
         """
         if request.method == 'GET':
             serializer = self.get_serializer(request.user)
+            
+            # Log profile view for audit compliance
+            try:
+                request_info = extract_request_info(request)
+                audit_service.log_profile_view(
+                    user=request.user,
+                    request_info=request_info,
+                )
+            except Exception as e:
+                # Don't fail the request if audit logging fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to log profile view: {str(e)}")
+            
             return Response(serializer.data)
         
         elif request.method in ['PUT', 'PATCH']:
             partial = request.method == 'PATCH'
+            
+            # Capture old values for audit logging
+            old_values = {}
+            for field in request.data.keys():
+                if hasattr(request.user, field):
+                    old_values[field] = getattr(request.user, field)
+            
             serializer = self.get_serializer(
                 request.user, 
                 data=request.data, 
@@ -268,7 +291,30 @@ class UserProfileViewSet(GenericViewSet, RetrieveModelMixin, UpdateModelMixin):
             )
             
             if serializer.is_valid():
-                serializer.save()
+                # Save the updated instance
+                updated_instance = serializer.save()
+                
+                # Capture new values for audit logging
+                new_values = {}
+                for field in request.data.keys():
+                    if hasattr(updated_instance, field):
+                        new_values[field] = getattr(updated_instance, field)
+                
+                # Log profile update for audit compliance
+                try:
+                    request_info = extract_request_info(request)
+                    audit_service.log_profile_update(
+                        user=updated_instance,
+                        old_values=old_values,
+                        new_values=new_values,
+                        request_info=request_info,
+                    )
+                except Exception as e:
+                    # Don't fail the request if audit logging fails
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.error(f"Failed to log profile update: {str(e)}")
+                
                 return Response(
                     {
                         'message': _('Profile updated successfully.'),
@@ -294,6 +340,20 @@ class UserProfileViewSet(GenericViewSet, RetrieveModelMixin, UpdateModelMixin):
         """
         instance = self.get_object()
         serializer = self.get_serializer(instance)
+        
+        # Log profile view for audit compliance
+        try:
+            request_info = extract_request_info(request)
+            audit_service.log_profile_view(
+                user=instance,
+                request_info=request_info,
+            )
+        except Exception as e:
+            # Don't fail the request if audit logging fails
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to log profile view: {str(e)}")
+        
         return Response(serializer.data)
     
     def update(self, request: Request, *args, **kwargs) -> Response:
@@ -308,10 +368,40 @@ class UserProfileViewSet(GenericViewSet, RetrieveModelMixin, UpdateModelMixin):
         """
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
+        
+        # Capture old values for audit logging
+        old_values = {}
+        for field in request.data.keys():
+            if hasattr(instance, field):
+                old_values[field] = getattr(instance, field)
+        
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         
         if serializer.is_valid():
-            serializer.save()
+            # Save the updated instance
+            updated_instance = serializer.save()
+            
+            # Capture new values for audit logging
+            new_values = {}
+            for field in request.data.keys():
+                if hasattr(updated_instance, field):
+                    new_values[field] = getattr(updated_instance, field)
+            
+            # Log profile update for audit compliance
+            try:
+                request_info = extract_request_info(request)
+                audit_service.log_profile_update(
+                    user=updated_instance,
+                    old_values=old_values,
+                    new_values=new_values,
+                    request_info=request_info,
+                )
+            except Exception as e:
+                # Don't fail the request if audit logging fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to log profile update: {str(e)}")
+            
             return Response(
                 {
                     'message': _('Profile updated successfully.'),
@@ -359,6 +449,129 @@ class UserProfileViewSet(GenericViewSet, RetrieveModelMixin, UpdateModelMixin):
             },
             status=status.HTTP_200_OK
         )
+    
+    @action(detail=False, methods=['get'])
+    def audit_logs(self, request: Request) -> Response:
+        """
+        Get user's audit logs for transparency and compliance.
+        
+        Args:
+            request: HTTP request
+            
+        Returns:
+            Response with audit logs
+        """
+        from ..serializers import AuditLogSerializer
+        
+        # Get query parameters
+        event_types = request.query_params.getlist('event_type')
+        limit = min(int(request.query_params.get('limit', 50)), 100)  # Max 100
+        
+        # Get audit logs
+        audit_logs = audit_service.get_user_audit_logs(
+            user=request.user,
+            event_types=event_types if event_types else None,
+            limit=limit,
+        )
+        
+        serializer = AuditLogSerializer(audit_logs, many=True)
+        
+        return Response(
+            {
+                'audit_logs': serializer.data,
+                'count': len(audit_logs),
+                'available_event_types': [
+                    'profile_update',
+                    'profile_view',
+                    'password_change',
+                    'email_verification',
+                    'login',
+                    'logout',
+                    'mfa_setup',
+                    'oauth_link',
+                    'data_export',
+                ]
+            },
+            status=status.HTTP_200_OK
+        )
+    
+    @action(detail=False, methods=['get'])
+    def profile_changes(self, request: Request) -> Response:
+        """
+        Get user's profile change history.
+        
+        Args:
+            request: HTTP request
+            
+        Returns:
+            Response with profile change history
+        """
+        from ..serializers import ProfileChangeHistorySerializer
+        
+        # Get query parameters
+        field_name = request.query_params.get('field_name')
+        limit = min(int(request.query_params.get('limit', 50)), 100)  # Max 100
+        
+        # Get profile changes
+        profile_changes = audit_service.get_profile_change_history(
+            user=request.user,
+            field_name=field_name,
+            limit=limit,
+        )
+        
+        serializer = ProfileChangeHistorySerializer(profile_changes, many=True)
+        
+        return Response(
+            {
+                'profile_changes': serializer.data,
+                'count': len(profile_changes),
+            },
+            status=status.HTTP_200_OK
+        )
+    
+    @action(detail=False, methods=['post'])
+    def export_data(self, request: Request) -> Response:
+        """
+        Export user's data for GDPR compliance.
+        
+        Args:
+            request: HTTP request
+            
+        Returns:
+            Response with exported data
+        """
+        try:
+            # Export user's audit data
+            export_data = audit_service.export_user_audit_data(
+                user=request.user,
+                include_sensitive=False,  # Don't include sensitive logs by default
+            )
+            
+            # Add profile data
+            profile_serializer = self.get_serializer(request.user)
+            export_data['profile_data'] = profile_serializer.data
+            
+            # Add identities data
+            identities = UserIdentity.objects.get_user_identities(request.user)
+            identities_serializer = UserIdentitySerializer(identities, many=True)
+            export_data['identities_data'] = identities_serializer.data
+            
+            return Response(
+                {
+                    'message': _('Data export completed successfully.'),
+                    'export_data': export_data,
+                },
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            return Response(
+                {
+                    'error': _('Failed to export data. Please try again later.'),
+                    'details': str(e) if settings.DEBUG else None
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=False, methods=['post'])
     def change_password(self, request: Request) -> Response:

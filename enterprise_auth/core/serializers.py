@@ -382,11 +382,16 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         validated_data['terms_accepted_at'] = timezone.now()
         validated_data['privacy_policy_accepted_at'] = timezone.now()
         
-        # Create user with verification workflow
-        user = UserProfile.objects.create_user_with_verification(
+        # Create user
+        user = UserProfile.objects.create_user(
             password=password,
             **validated_data
         )
+        
+        # Send verification email using the service
+        from .services.email_verification_service import EmailVerificationService
+        email_service = EmailVerificationService()
+        email_service.send_verification_email(user, resend=False)
         
         return user
 
@@ -552,9 +557,9 @@ class EmailVerificationSerializer(serializers.Serializer):
         user_id = attrs.get('user_id')
         token = attrs.get('token')
         
-        # Verify the token
-        if not UserProfile.objects.verify_email(user_id, token):
-            raise ValidationError(_('Invalid or expired verification token.'))
+        # Basic validation - actual verification is done in the service
+        if not user_id or not token:
+            raise ValidationError(_('User ID and token are required.'))
         
         return attrs
 

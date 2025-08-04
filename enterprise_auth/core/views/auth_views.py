@@ -116,16 +116,47 @@ class EmailVerificationView(APIView):
         Returns:
             Response with verification status
         """
+        from ..services.email_verification_service import EmailVerificationService
+        from ..exceptions import TokenInvalidError, TokenExpiredError
+        
         serializer = EmailVerificationSerializer(data=request.data)
         
         if serializer.is_valid():
-            return Response(
-                {
-                    'message': _('Email verified successfully. Your account is now active.'),
-                    'status': 'verified'
-                },
-                status=status.HTTP_200_OK
-            )
+            user_id = serializer.validated_data['user_id']
+            token = serializer.validated_data['token']
+            
+            email_service = EmailVerificationService()
+            
+            try:
+                result = email_service.verify_email(str(user_id), token)
+                
+                return Response(
+                    {
+                        'message': result['message'],
+                        'status': result['status'],
+                        'user_id': result['user_id'],
+                        'verified_at': result.get('verified_at')
+                    },
+                    status=status.HTTP_200_OK
+                )
+                
+            except (TokenInvalidError, TokenExpiredError) as e:
+                return Response(
+                    {
+                        'error': str(e),
+                        'status': 'invalid_token'
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+            except Exception as e:
+                return Response(
+                    {
+                        'error': _('Unable to verify email. Please try again later.'),
+                        'details': str(e) if settings.DEBUG else None
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
         
         return Response(
             serializer.errors,
@@ -152,27 +183,40 @@ class ResendVerificationView(APIView):
         Returns:
             Response with resend status
         """
+        from ..services.email_verification_service import EmailVerificationService
+        from ..exceptions import RateLimitExceededError
+        
         serializer = ResendVerificationSerializer(data=request.data)
         
         if serializer.is_valid():
             email = serializer.validated_data['email']
+            email_service = EmailVerificationService()
             
-            # Attempt to resend verification email
-            if UserProfile.objects.resend_verification_email(email):
+            try:
+                result = email_service.resend_verification_email(email)
+                
+                response_status = status.HTTP_200_OK
+                if not result['success'] and result.get('status') == 'rate_limited':
+                    response_status = status.HTTP_429_TOO_MANY_REQUESTS
+                
                 return Response(
                     {
-                        'message': _('Verification email sent successfully. Please check your inbox.'),
-                        'status': 'sent'
+                        'message': result['message'],
+                        'status': result['status'],
+                        'email_sent': result.get('email_sent', False),
+                        'expires_at': result.get('expires_at'),
+                        'retry_after_minutes': result.get('retry_after_minutes')
                     },
-                    status=status.HTTP_200_OK
+                    status=response_status
                 )
-            else:
+                
+            except Exception as e:
                 return Response(
                     {
                         'error': _('Unable to send verification email. Please try again later.'),
-                        'status': 'failed'
+                        'details': str(e) if settings.DEBUG else None
                     },
-                    status=status.HTTP_429_TOO_MANY_REQUESTS
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
         
         return Response(
@@ -649,6 +693,106 @@ class PasswordPolicyView(APIView):
             {
                 'policy': policy_info,
                 'message': _('Current password policy requirements')
+            },
+            status=status.HTTP_200_OK
+        )
+
+
+class EmailVerificationStatusView(APIView):
+    """
+    API view for checking email verification status.
+    
+    Provides verification status information for authenticated users.
+    """
+    
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request: Request) -> Response:
+        """
+        Get email verification status for current user.
+        
+        Args:
+            request: HTTP request
+            
+        Returns:
+            Response with verification status information
+        """
+        from ..services.email_verification_service import EmailVerificationService
+        
+        email_service = EmailVerificationService()
+        status_info = email_service.get_verification_status(request.user)
+        
+        return Response(status_info, status=status.HTTP_200_OK)
+
+
+class EmailVerificationValidateTokenView(APIView):
+    """
+    API view for validating email verification tokens.
+    
+    Validates verification tokens without consuming them.
+    """
+    
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request: Request) -> Response:
+        """
+        Validate email verification token.
+        
+        Args:
+            request: HTTP request with token data
+            
+        Returns:
+            Response with token validation status
+        """
+        from ..services.email_verification_service import EmailVerificationService
+        
+        user_id = request.data.get('user_id')
+        token = request.data.get('token')
+        
+        if not user_id or not token:
+            return Response(
+                {
+                    'error': _('User ID and token are required'),
+                    'valid': False
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        email_service = EmailVerificationService()
+        result = email_service.validate_verification_token(str(user_id), token)
+        
+        response_status = status.HTTP_200_OK if result['valid'] else status.HTTP_400_BAD_REQUEST
+        return Response(result, status=response_status)
+
+
+class EmailVerificationStatsView(APIView):
+    """
+    API view for email verification statistics.
+    
+    Provides verification statistics for monitoring and analytics.
+    """
+    
+    permission_classes = [permissions.IsAdminUser]
+    
+    def get(self, request: Request) -> Response:
+        """
+        Get email verification statistics.
+        
+        Args:
+            request: HTTP request
+            
+        Returns:
+            Response with verification statistics
+        """
+        from ..services.email_verification_service import EmailVerificationService
+        
+        email_service = EmailVerificationService()
+        stats = email_service.get_verification_statistics()
+        
+        return Response(
+            {
+                'statistics': stats,
+                'message': _('Email verification statistics')
             },
             status=status.HTTP_200_OK
         )

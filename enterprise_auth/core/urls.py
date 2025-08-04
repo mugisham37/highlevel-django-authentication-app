@@ -9,6 +9,9 @@ from .views.auth_views import (
     UserRegistrationView,
     EmailVerificationView,
     ResendVerificationView,
+    EmailVerificationStatusView,
+    EmailVerificationValidateTokenView,
+    EmailVerificationStatsView,
     UserProfileViewSet,
     PasswordResetRequestView,
     PasswordResetConfirmView,
@@ -33,6 +36,9 @@ urlpatterns = [
     path('auth/register/', UserRegistrationView.as_view(), name='register'),
     path('auth/verify-email/', EmailVerificationView.as_view(), name='verify_email'),
     path('auth/resend-verification/', ResendVerificationView.as_view(), name='resend_verification'),
+    path('auth/verification-status/', EmailVerificationStatusView.as_view(), name='verification_status'),
+    path('auth/verify-email/validate/', EmailVerificationValidateTokenView.as_view(), name='verify_email_validate'),
+    path('auth/verification-stats/', EmailVerificationStatsView.as_view(), name='verification_stats'),
     
     # Password management endpoints
     path('auth/password/reset/', PasswordResetRequestView.as_view(), name='password_reset_request'),

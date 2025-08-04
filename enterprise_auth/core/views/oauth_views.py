@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -183,7 +184,8 @@ def handle_oauth_callback(request: Request, provider_name: str) -> Response:
     
     This endpoint processes the OAuth callback, exchanges the authorization code
     for tokens, retrieves user information, and either creates a new user account
-    or links the OAuth identity to an existing account.
+    or links the OAuth identity to an existing account. Includes comprehensive
+    error handling, monitoring, and fallback authentication methods.
     
     Args:
         provider_name: Name of the OAuth provider (e.g., 'google')
@@ -191,6 +193,8 @@ def handle_oauth_callback(request: Request, provider_name: str) -> Response:
     Request Body:
         code (str): Authorization code from OAuth callback
         state (str): State parameter for CSRF verification
+        error (str, optional): OAuth error code from provider
+        error_description (str, optional): OAuth error description from provider
         
     Returns:
         200: JWT token pair and user information
@@ -199,17 +203,71 @@ def handle_oauth_callback(request: Request, provider_name: str) -> Response:
         422: OAuth provider not configured or disabled
         500: Internal server error
     """
+    from ..services.oauth_callback_service import oauth_callback_service
+    
+    # Extract request information for monitoring
+    request_info = extract_request_info(request)
+    correlation_id = request.headers.get('X-Correlation-ID', secrets.token_urlsafe(16))
+    
+    # Log callback initiation
+    logger.info(
+        f"OAuth callback initiated for {provider_name}",
+        extra={
+            'provider': provider_name,
+            'correlation_id': correlation_id,
+            'ip_address': request_info['ip_address'],
+            'user_agent': request_info['user_agent'],
+        }
+    )
+    
     try:
+        # Check for OAuth provider errors first
+        oauth_error = request.data.get('error')
+        if oauth_error:
+            error_description = request.data.get('error_description', '')
+            error_uri = request.data.get('error_uri', '')
+            
+            # Log OAuth provider error
+            logger.warning(
+                f"OAuth provider error for {provider_name}: {oauth_error}",
+                extra={
+                    'provider': provider_name,
+                    'oauth_error': oauth_error,
+                    'error_description': error_description,
+                    'error_uri': error_uri,
+                    'correlation_id': correlation_id,
+                }
+            )
+            
+            # Handle specific OAuth errors with fallback suggestions
+            return oauth_callback_service.handle_oauth_provider_error(
+                provider_name=provider_name,
+                oauth_error=oauth_error,
+                error_description=error_description,
+                error_uri=error_uri,
+                correlation_id=correlation_id
+            )
+        
         # Extract callback parameters
         code = request.data.get('code')
         state = request.data.get('state')
         
         if not code or not state:
-            return Response({
-                'error': 'Missing required parameters: code and state'
-            }, status=status.HTTP_400_BAD_REQUEST)
+            logger.warning(
+                f"Missing OAuth callback parameters for {provider_name}",
+                extra={
+                    'provider': provider_name,
+                    'has_code': bool(code),
+                    'has_state': bool(state),
+                    'correlation_id': correlation_id,
+                }
+            )
+            return oauth_callback_service.handle_missing_parameters_error(
+                provider_name=provider_name,
+                correlation_id=correlation_id
+            )
         
-        # Verify state parameter
+        # Verify state parameter with enhanced validation
         session_state = request.session.get(f'oauth_state_{provider_name}')
         if not session_state or session_state != state:
             logger.warning(
@@ -218,104 +276,181 @@ def handle_oauth_callback(request: Request, provider_name: str) -> Response:
                     'provider': provider_name,
                     'expected_state': session_state,
                     'received_state': state,
+                    'correlation_id': correlation_id,
+                    'ip_address': request_info['ip_address'],
                 }
             )
-            return Response({
-                'error': 'Invalid state parameter',
-                'provider': provider_name
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return oauth_callback_service.handle_state_mismatch_error(
+                provider_name=provider_name,
+                correlation_id=correlation_id
+            )
         
         # Get PKCE code verifier from session
         code_verifier = request.session.get(f'oauth_code_verifier_{provider_name}')
         
-        # Handle OAuth callback
-        token_data, user_data = oauth_service.handle_callback(
-            provider_name=provider_name,
-            code=code,
-            state=state,
-            code_verifier=code_verifier
-        )
+        # Handle OAuth callback with comprehensive error handling
+        try:
+            token_data, user_data = oauth_service.handle_callback(
+                provider_name=provider_name,
+                code=code,
+                state=state,
+                code_verifier=code_verifier
+            )
+        except Exception as callback_error:
+            logger.error(
+                f"OAuth callback processing failed for {provider_name}",
+                extra={
+                    'provider': provider_name,
+                    'error': str(callback_error),
+                    'correlation_id': correlation_id,
+                }
+            )
+            return oauth_callback_service.handle_callback_processing_error(
+                provider_name=provider_name,
+                error=callback_error,
+                correlation_id=correlation_id
+            )
         
         # Clean up session data
         request.session.pop(f'oauth_state_{provider_name}', None)
         request.session.pop(f'oauth_code_verifier_{provider_name}', None)
         
-        # Find or create user account
+        # Find or create user account with enhanced error handling
         user = None
         identity = None
         is_new_user = False
         
-        with transaction.atomic():
-            # Try to find existing user by OAuth identity
-            user = oauth_service.find_user_by_provider_identity(
-                provider_name=provider_name,
-                provider_user_id=user_data.provider_user_id
-            )
-            
-            if not user and user_data.email:
-                # Try to find existing user by email
-                try:
-                    user = User.objects.get(email=user_data.email, is_deleted=False)
+        try:
+            with transaction.atomic():
+                # Try to find existing user by OAuth identity
+                user = oauth_service.find_user_by_provider_identity(
+                    provider_name=provider_name,
+                    provider_user_id=user_data.provider_user_id
+                )
+                
+                if not user and user_data.email:
+                    # Try to find existing user by email
+                    try:
+                        user = User.objects.get(email=user_data.email, is_deleted=False)
+                        logger.info(
+                            f"Found existing user by email for OAuth {provider_name}",
+                            extra={
+                                'provider': provider_name,
+                                'user_id': user.id,
+                                'email': user_data.email,
+                                'correlation_id': correlation_id,
+                            }
+                        )
+                    except User.DoesNotExist:
+                        pass
+                
+                if not user:
+                    # Validate user data before creating account
+                    if not user_data.email:
+                        logger.warning(
+                            f"OAuth user data missing email for {provider_name}",
+                            extra={
+                                'provider': provider_name,
+                                'provider_user_id': user_data.provider_user_id,
+                                'correlation_id': correlation_id,
+                            }
+                        )
+                        return oauth_callback_service.handle_missing_user_data_error(
+                            provider_name=provider_name,
+                            correlation_id=correlation_id
+                        )
+                    
+                    # Create new user account
+                    user = User.objects.create_user(
+                        email=user_data.email,
+                        first_name=user_data.first_name or '',
+                        last_name=user_data.last_name or '',
+                        is_email_verified=user_data.verified_email,
+                        profile_picture_url=user_data.profile_picture_url,
+                        language=user_data.locale[:2] if user_data.locale else 'en',
+                        timezone=user_data.timezone or 'UTC',
+                    )
+                    is_new_user = True
+                    
                     logger.info(
-                        f"Found existing user by email for OAuth {provider_name}",
+                        f"Created new user from OAuth {provider_name}",
                         extra={
                             'provider': provider_name,
                             'user_id': user.id,
                             'email': user_data.email,
+                            'correlation_id': correlation_id,
                         }
                     )
-                except User.DoesNotExist:
-                    pass
-            
-            if not user:
-                # Create new user account
-                user = User.objects.create_user(
-                    email=user_data.email,
-                    first_name=user_data.first_name or '',
-                    last_name=user_data.last_name or '',
-                    is_email_verified=user_data.verified_email,
-                    profile_picture_url=user_data.profile_picture_url,
-                    language=user_data.locale[:2] if user_data.locale else 'en',
-                    timezone=user_data.timezone or 'UTC',
-                )
-                is_new_user = True
                 
-                logger.info(
-                    f"Created new user from OAuth {provider_name}",
-                    extra={
-                        'provider': provider_name,
-                        'user_id': user.id,
-                        'email': user_data.email,
-                    }
+                # Link OAuth identity to user account
+                identity = oauth_service.link_user_identity(
+                    user=user,
+                    provider_name=provider_name,
+                    token_data=token_data,
+                    user_data=user_data,
+                    is_primary=True
                 )
-            
-            # Link OAuth identity to user account
-            identity = oauth_service.link_user_identity(
-                user=user,
+                
+        except Exception as user_creation_error:
+            logger.error(
+                f"User creation/linking failed for OAuth {provider_name}",
+                extra={
+                    'provider': provider_name,
+                    'error': str(user_creation_error),
+                    'correlation_id': correlation_id,
+                }
+            )
+            return oauth_callback_service.handle_user_creation_error(
                 provider_name=provider_name,
-                token_data=token_data,
-                user_data=user_data,
-                is_primary=True
+                error=user_creation_error,
+                correlation_id=correlation_id
             )
         
         # Extract device information
-        device_info = DeviceInfo(
-            **extract_request_info(request)
-        )
+        device_info = DeviceInfo.from_request(request)
         
-        # Generate JWT tokens
-        jwt_tokens = jwt_service.generate_token_pair(
-            user=user,
-            device_info=device_info,
-            scopes=['read', 'write']  # Default scopes for OAuth users
-        )
+        # Generate JWT tokens with error handling
+        try:
+            jwt_tokens = jwt_service.generate_token_pair(
+                user=user,
+                device_info=device_info,
+                scopes=['read', 'write']  # Default scopes for OAuth users
+            )
+        except Exception as token_error:
+            logger.error(
+                f"JWT token generation failed for OAuth {provider_name}",
+                extra={
+                    'provider': provider_name,
+                    'user_id': user.id,
+                    'error': str(token_error),
+                    'correlation_id': correlation_id,
+                }
+            )
+            return oauth_callback_service.handle_token_generation_error(
+                provider_name=provider_name,
+                error=token_error,
+                correlation_id=correlation_id
+            )
         
         # Update user login metadata
-        user.update_login_metadata(
-            ip_address=device_info.ip_address,
-            user_agent=device_info.user_agent
-        )
+        try:
+            user.update_login_metadata(
+                ip_address=device_info.ip_address,
+                user_agent=device_info.user_agent
+            )
+        except Exception as metadata_error:
+            # Log but don't fail the authentication
+            logger.warning(
+                f"Failed to update login metadata for OAuth {provider_name}",
+                extra={
+                    'provider': provider_name,
+                    'user_id': user.id,
+                    'error': str(metadata_error),
+                    'correlation_id': correlation_id,
+                }
+            )
         
+        # Log successful OAuth authentication
         logger.info(
             f"OAuth authentication successful for {provider_name}",
             extra={
@@ -323,7 +458,18 @@ def handle_oauth_callback(request: Request, provider_name: str) -> Response:
                 'user_id': user.id,
                 'is_new_user': is_new_user,
                 'identity_id': identity.id,
+                'correlation_id': correlation_id,
             }
+        )
+        
+        # Record successful OAuth authentication event
+        oauth_callback_service.record_successful_authentication(
+            provider_name=provider_name,
+            user=user,
+            identity=identity,
+            is_new_user=is_new_user,
+            correlation_id=correlation_id,
+            request_info=request_info
         )
         
         return Response({
@@ -347,45 +493,52 @@ def handle_oauth_callback(request: Request, provider_name: str) -> Response:
                 'provider_username': user_data.username,
                 'is_primary': identity.is_primary,
                 'linked_at': identity.linked_at.isoformat(),
-            }
+            },
+            'correlation_id': correlation_id,
         }, status=status.HTTP_200_OK)
         
     except OAuthProviderNotFoundError as e:
-        logger.warning(f"OAuth provider not found: {provider_name}")
-        return Response({
-            'error': f'OAuth provider "{provider_name}" not found',
-            'provider': provider_name
-        }, status=status.HTTP_404_NOT_FOUND)
+        logger.warning(
+            f"OAuth provider not found: {provider_name}",
+            extra={'provider': provider_name, 'correlation_id': correlation_id}
+        )
+        return oauth_callback_service.handle_provider_not_found_error(
+            provider_name=provider_name,
+            correlation_id=correlation_id
+        )
         
     except (OAuthProviderNotConfiguredError, OAuthProviderDisabledError) as e:
-        logger.warning(f"OAuth provider not available: {provider_name} - {e}")
-        return Response({
-            'error': f'OAuth provider "{provider_name}" is not available',
-            'provider': provider_name,
-            'details': str(e)
-        }, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        logger.warning(
+            f"OAuth provider not available: {provider_name} - {e}",
+            extra={'provider': provider_name, 'error': str(e), 'correlation_id': correlation_id}
+        )
+        return oauth_callback_service.handle_provider_unavailable_error(
+            provider_name=provider_name,
+            error=e,
+            correlation_id=correlation_id
+        )
         
     except OAuthError as e:
         logger.error(
             f"OAuth callback failed for {provider_name}: {e}",
-            extra={'provider': provider_name, 'error': str(e)}
+            extra={'provider': provider_name, 'error': str(e), 'correlation_id': correlation_id}
         )
-        return Response({
-            'error': 'OAuth authentication failed',
-            'provider': provider_name,
-            'details': str(e)
-        }, status=status.HTTP_400_BAD_REQUEST)
+        return oauth_callback_service.handle_oauth_error(
+            provider_name=provider_name,
+            error=e,
+            correlation_id=correlation_id
+        )
         
     except Exception as e:
         logger.error(
             f"Unexpected error in OAuth callback for {provider_name}: {e}",
-            extra={'provider': provider_name, 'error': str(e)}
+            extra={'provider': provider_name, 'error': str(e), 'correlation_id': correlation_id}
         )
-        return Response({
-            'error': 'OAuth authentication failed',
-            'provider': provider_name,
-            'details': 'An unexpected error occurred'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return oauth_callback_service.handle_unexpected_error(
+            provider_name=provider_name,
+            error=e,
+            correlation_id=correlation_id
+        )
 
 
 @api_view(['GET'])
@@ -829,5 +982,260 @@ def oauth_provider_health(request: Request) -> Response:
         )
         return Response({
             'error': 'Failed to retrieve OAuth provider health status',
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def oauth_error_details(request: Request, provider_name: str) -> Response:
+    """
+    Get detailed OAuth error information and fallback suggestions.
+    
+    This endpoint provides comprehensive error details for OAuth failures,
+    including suggested fallback authentication methods and troubleshooting steps.
+    
+    Args:
+        provider_name: Name of the OAuth provider
+        
+    Query Parameters:
+        error_code (str, optional): Specific error code to get details for
+        correlation_id (str, optional): Correlation ID for error tracking
+        
+    Returns:
+        200: OAuth error details and fallback suggestions
+        404: OAuth provider not found
+        500: Internal server error
+    """
+    from ..services.oauth_callback_service import oauth_callback_service
+    from ..utils.monitoring import oauth_metrics
+    
+    try:
+        error_code = request.query_params.get('error_code')
+        correlation_id = request.query_params.get('correlation_id', secrets.token_urlsafe(16))
+        
+        # Get provider metrics
+        provider_metrics = oauth_metrics.get_provider_metrics(provider_name)
+        
+        # Generate fallback suggestions
+        fallback_suggestions = oauth_callback_service._generate_fallback_suggestions(
+            provider_name=provider_name,
+            fallback_methods=['email_password', 'alternative_oauth', 'magic_link']
+        )
+        
+        # Get error-specific information
+        error_info = {}
+        if error_code:
+            error_mapping = {
+                'access_denied': {
+                    'title': 'Access Denied',
+                    'description': 'You denied access to your account during authentication.',
+                    'common_causes': [
+                        'User clicked "Cancel" or "Deny" on the provider\'s authorization page',
+                        'User closed the authentication window before completing the process',
+                        'Provider account permissions are insufficient'
+                    ],
+                    'troubleshooting_steps': [
+                        'Try authenticating again and click "Allow" or "Authorize"',
+                        'Check that your account has the necessary permissions',
+                        'Clear your browser cache and cookies for the provider',
+                        'Try using an incognito/private browsing window'
+                    ],
+                    'user_action_required': True,
+                },
+                'invalid_request': {
+                    'title': 'Invalid Request',
+                    'description': 'The authentication request was malformed or invalid.',
+                    'common_causes': [
+                        'Corrupted authentication state or session data',
+                        'Browser security settings blocking the request',
+                        'Network connectivity issues during authentication'
+                    ],
+                    'troubleshooting_steps': [
+                        'Clear your browser cache and cookies',
+                        'Try using a different browser or device',
+                        'Check your internet connection',
+                        'Disable browser extensions that might interfere'
+                    ],
+                    'user_action_required': True,
+                },
+                'server_error': {
+                    'title': 'Provider Server Error',
+                    'description': 'The authentication provider is experiencing technical difficulties.',
+                    'common_causes': [
+                        'Provider service outage or maintenance',
+                        'High traffic causing provider slowdowns',
+                        'Temporary provider configuration issues'
+                    ],
+                    'troubleshooting_steps': [
+                        'Wait a few minutes and try again',
+                        'Check the provider\'s status page for known issues',
+                        'Try using an alternative authentication method',
+                        'Contact support if the issue persists'
+                    ],
+                    'user_action_required': False,
+                },
+                'temporarily_unavailable': {
+                    'title': 'Service Temporarily Unavailable',
+                    'description': 'The authentication provider is temporarily unavailable.',
+                    'common_causes': [
+                        'Scheduled maintenance by the provider',
+                        'Temporary service disruption',
+                        'Provider rate limiting or capacity issues'
+                    ],
+                    'troubleshooting_steps': [
+                        'Wait 5-10 minutes and try again',
+                        'Use an alternative authentication method',
+                        'Check the provider\'s social media for updates',
+                        'Try again during off-peak hours'
+                    ],
+                    'user_action_required': False,
+                },
+            }
+            
+            error_info = error_mapping.get(error_code, {
+                'title': 'Authentication Error',
+                'description': f'An error occurred during {provider_name} authentication.',
+                'common_causes': ['Various technical issues may cause authentication failures'],
+                'troubleshooting_steps': [
+                    'Try authenticating again',
+                    'Use an alternative authentication method',
+                    'Contact support if the problem persists'
+                ],
+                'user_action_required': True,
+            })
+        
+        # Get provider-specific troubleshooting
+        provider_troubleshooting = {
+            'google': {
+                'additional_steps': [
+                    'Ensure your Google account is not suspended',
+                    'Check if two-factor authentication is properly configured',
+                    'Verify that third-party app access is enabled in Google settings'
+                ],
+                'support_url': 'https://support.google.com/accounts',
+            },
+            'github': {
+                'additional_steps': [
+                    'Ensure your GitHub account email is verified',
+                    'Check if your account has the required OAuth app permissions',
+                    'Verify that your account is not flagged for security review'
+                ],
+                'support_url': 'https://support.github.com',
+            },
+            'microsoft': {
+                'additional_steps': [
+                    'Ensure your Microsoft account is active and verified',
+                    'Check if your organization allows third-party app access',
+                    'Verify that your account type (personal/work) is supported'
+                ],
+                'support_url': 'https://support.microsoft.com',
+            },
+        }
+        
+        provider_specific = provider_troubleshooting.get(provider_name, {
+            'additional_steps': [],
+            'support_url': None,
+        })
+        
+        response_data = {
+            'provider': provider_name,
+            'error_code': error_code,
+            'correlation_id': correlation_id,
+            'error_info': error_info,
+            'provider_specific': provider_specific,
+            'fallback_methods': fallback_suggestions,
+            'provider_metrics': {
+                'success_rate': provider_metrics.get('success_rate', 0.0),
+                'recent_error_count': len(provider_metrics.get('recent_errors', [])),
+                'is_experiencing_issues': provider_metrics.get('success_rate', 1.0) < 0.8,
+            },
+            'system_status': {
+                'provider_available': True,  # This would be determined by health checks
+                'estimated_resolution_time': None,
+                'known_issues': [],
+            },
+            'timestamp': timezone.now().isoformat(),
+        }
+        
+        logger.info(
+            f"OAuth error details provided for {provider_name}",
+            extra={
+                'provider': provider_name,
+                'error_code': error_code,
+                'correlation_id': correlation_id,
+                'fallback_count': len(fallback_suggestions),
+            }
+        )
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(
+            f"Failed to get OAuth error details for {provider_name}: {e}",
+            extra={'provider': provider_name, 'error': str(e)}
+        )
+        return Response({
+            'error': 'Failed to retrieve OAuth error details',
+            'provider': provider_name,
+            'details': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def oauth_metrics_summary(request: Request) -> Response:
+    """
+    Get OAuth metrics summary for monitoring and debugging.
+    
+    Returns aggregated OAuth metrics including success rates, error counts,
+    and provider-specific statistics for monitoring purposes.
+    
+    Query Parameters:
+        provider (str, optional): Specific provider to get metrics for
+        
+    Returns:
+        200: OAuth metrics summary
+        500: Internal server error
+    """
+    from ..utils.monitoring import oauth_metrics
+    
+    try:
+        provider_name = request.query_params.get('provider')
+        
+        if provider_name:
+            # Get metrics for specific provider
+            metrics = oauth_metrics.get_provider_metrics(provider_name)
+            response_data = {
+                'provider_metrics': metrics,
+                'timestamp': timezone.now().isoformat(),
+            }
+        else:
+            # Get overall metrics
+            overall_metrics = oauth_metrics.get_overall_metrics()
+            
+            # Get metrics for all available providers
+            available_providers = oauth_service.get_available_providers()
+            provider_metrics = {}
+            
+            for provider in available_providers:
+                provider_name = provider['name']
+                provider_metrics[provider_name] = oauth_metrics.get_provider_metrics(provider_name)
+            
+            response_data = {
+                'overall_metrics': overall_metrics,
+                'provider_metrics': provider_metrics,
+                'timestamp': timezone.now().isoformat(),
+            }
+        
+        return Response(response_data, status=status.HTTP_200_OK)
+        
+    except Exception as e:
+        logger.error(
+            f"Failed to get OAuth metrics summary: {e}",
+            extra={'error': str(e)}
+        )
+        return Response({
+            'error': 'Failed to retrieve OAuth metrics summary',
             'details': str(e)
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

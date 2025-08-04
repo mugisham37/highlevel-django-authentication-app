@@ -30,6 +30,8 @@ from .views.oauth_views import (
     verify_social_linking,
     get_social_linking_statistics,
     oauth_provider_health,
+    oauth_error_details,
+    oauth_metrics_summary,
 )
 
 app_name = 'core'
@@ -68,8 +70,10 @@ urlpatterns = [
     path('oauth/<str:provider_name>/callback/', handle_oauth_callback, name='handle_oauth_callback'),
     path('oauth/<str:provider_name>/link/', link_oauth_identity, name='link_oauth_identity'),
     path('oauth/<str:provider_name>/unlink/', unlink_oauth_identity, name='unlink_oauth_identity'),
+    path('oauth/<str:provider_name>/error-details/', oauth_error_details, name='oauth_error_details'),
     path('oauth/identities/', list_user_oauth_identities, name='list_user_oauth_identities'),
     path('oauth/verify-linking/', verify_social_linking, name='verify_social_linking'),
     path('oauth/linking-statistics/', get_social_linking_statistics, name='get_social_linking_statistics'),
     path('oauth/health/', oauth_provider_health, name='oauth_provider_health'),
+    path('oauth/metrics/', oauth_metrics_summary, name='oauth_metrics_summary'),
 ]

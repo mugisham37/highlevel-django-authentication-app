@@ -462,6 +462,63 @@ class OAuthLinkingTokenInvalidError(OAuthError):
         super().__init__(message, error_code="OAUTH_LINKING_TOKEN_INVALID", **kwargs)
 
 
+class OAuthCallbackError(OAuthError):
+    """Exception raised during OAuth callback processing."""
+    
+    def __init__(
+        self,
+        message: str = "OAuth callback processing failed",
+        provider: Optional[str] = None,
+        callback_error: Optional[str] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        if callback_error:
+            details['callback_error'] = callback_error
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_CALLBACK_ERROR", **kwargs)
+
+
+class OAuthProviderTimeoutError(OAuthError):
+    """Exception raised when OAuth provider request times out."""
+    
+    def __init__(
+        self,
+        message: str = "OAuth provider request timed out",
+        provider: Optional[str] = None,
+        timeout_duration: Optional[float] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        if timeout_duration:
+            details['timeout_duration'] = timeout_duration
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_PROVIDER_TIMEOUT", **kwargs)
+
+
+class OAuthRateLimitError(OAuthError):
+    """Exception raised when OAuth provider rate limit is exceeded."""
+    
+    def __init__(
+        self,
+        message: str = "OAuth provider rate limit exceeded",
+        provider: Optional[str] = None,
+        retry_after: Optional[int] = None,
+        **kwargs
+    ):
+        details = kwargs.get('details', {})
+        if provider:
+            details['provider'] = provider
+        if retry_after:
+            details['retry_after'] = retry_after
+        kwargs['details'] = details
+        super().__init__(message, error_code="OAUTH_RATE_LIMIT_ERROR", **kwargs)
+
+
 class OAuthMaxIdentitiesExceededError(OAuthError):
     """Exception raised when maximum number of linked identities is exceeded."""
     

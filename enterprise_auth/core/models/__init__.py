@@ -7,6 +7,7 @@ from .user import UserProfile, UserIdentity
 from .audit import AuditLog, ProfileChangeHistory
 from .jwt import RefreshToken, TokenBlacklist, JWTKeyRotation
 from .mfa import MFADevice, MFAAttempt
+from .session import UserSession, DeviceInfo, SessionActivity
 
 __all__ = [
     'BaseModel',
@@ -22,4 +23,7 @@ __all__ = [
     'JWTKeyRotation',
     'MFADevice',
     'MFAAttempt',
+    'UserSession',
+    'DeviceInfo',
+    'SessionActivity',
 ]

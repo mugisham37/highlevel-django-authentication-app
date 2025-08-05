@@ -61,7 +61,8 @@ class UserProfileManager(BaseUserManager):
             raise ValueError(_('Last name is required'))
         
         # Create user instance
-        user = self.model(email=email, **extra_fields)
+        # Set username to email since we use email as USERNAME_FIELD
+        user = self.model(email=email, username=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         

@@ -23,6 +23,10 @@ pyotp==2.9.0
 qrcode[pil]==7.4.2
 twilio==8.10.3
 
+# Device fingerprinting and geolocation
+user-agents==2.2.0
+requests==2.31.0
+
 # Background tasks
 celery==5.3.4
 

@@ -1,0 +1,180 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-scan-config
+  namespace: enterprise-auth
+data:
+  trivy-config.yaml: |
+    # Trivy Security Scanner Configuration
+    format: json
+    output: /tmp/trivy-results.json
+    severity:
+      - CRITICAL
+      - HIGH
+      - MEDIUM
+    vulnerability:
+      type:
+        - os
+        - library
+    secret:
+      config: /etc/trivy/secret.yaml
+    ignore-unfixed: false
+    exit-code: 1
+    
+  secret.yaml: |
+    # Secret scanning rules
+    rules:
+      - id: aws-access-key
+        category: AWS
+        title: AWS Access Key
+        regex: 'AKIA[0-9A-Z]{16}'
+        keywords:
+          - aws_access_key_id
+          - aws-access-key-id
+      - id: aws-secret-key
+        category: AWS
+        title: AWS Secret Key
+        regex: '[A-Za-z0-9/+=]{40}'
+        keywords:
+          - aws_secret_access_key
+          - aws-secret-access-key
+      - id: github-token
+        category: GitHub
+        title: GitHub Token
+        regex: 'ghp_[A-Za-z0-9]{36}'
+        keywords:
+          - github_token
+          - github-token
+      - id: jwt-secret
+        category: JWT
+        title: JWT Secret
+        regex: '[A-Za-z0-9+/=]{32,}'
+        keywords:
+          - jwt_secret
+          - secret_key
+      - id: database-password
+        category: Database
+        title: Database Password
+        regex: 'postgresql://[^:]+:([^@]+)@'
+        keywords:
+          - database_url
+          - postgres_password
+      - id: redis-password
+        category: Redis
+        title: Redis Password
+        regex: 'redis://[^:]*:([^@]+)@'
+        keywords:
+          - redis_url
+          - redis_password
+          
+  bandit-config.yaml: |
+    # Bandit Security Linter Configuration
+    tests:
+      - B101  # assert_used
+      - B102  # exec_used
+      - B103  # set_bad_file_permissions
+      - B104  # hardcoded_bind_all_interfaces
+      - B105  # hardcoded_password_string
+      - B106  # hardcoded_password_funcarg
+      - B107  # hardcoded_password_default
+      - B108  # hardcoded_tmp_directory
+      - B110  # try_except_pass
+      - B112  # try_except_continue
+      - B201  # flask_debug_true
+      - B301  # pickle
+      - B302  # marshal
+      - B303  # md5
+      - B304  # des
+      - B305  # cipher
+      - B306  # mktemp_q
+      - B307  # eval
+      - B308  # mark_safe
+      - B309  # httpsconnection
+      - B310  # urllib_urlopen
+      - B311  # random
+      - B312  # telnetlib
+      - B313  # xml_bad_cElementTree
+      - B314  # xml_bad_ElementTree
+      - B315  # xml_bad_expatreader
+      - B316  # xml_bad_expatbuilder
+      - B317  # xml_bad_sax
+      - B318  # xml_bad_minidom
+      - B319  # xml_bad_pulldom
+      - B320  # xml_bad_etree
+      - B321  # ftplib
+      - B322  # input
+      - B323  # unverified_context
+      - B324  # hashlib_new_insecure_functions
+      - B325  # tempnam
+      - B401  # import_telnetlib
+      - B402  # import_ftplib
+      - B403  # import_pickle
+      - B404  # import_subprocess
+      - B405  # import_xml_etree
+      - B406  # import_xml_sax
+      - B407  # import_xml_expat
+      - B408  # import_xml_minidom
+      - B409  # import_xml_pulldom
+      - B410  # import_lxml
+      - B411  # import_xmlrpclib
+      - B412  # import_httpoxy
+      - B413  # import_pycrypto
+      - B501  # request_with_no_cert_validation
+      - B502  # ssl_with_bad_version
+      - B503  # ssl_with_bad_defaults
+      - B504  # ssl_with_no_version
+      - B505  # weak_cryptographic_key
+      - B506  # yaml_load
+      - B507  # ssh_no_host_key_verification
+      - B601  # paramiko_calls
+      - B602  # subprocess_popen_with_shell_equals_true
+      - B603  # subprocess_without_shell_equals_true
+      - B604  # any_other_function_with_shell_equals_true
+      - B605  # start_process_with_a_shell
+      - B606  # start_process_with_no_shell
+      - B607  # start_process_with_partial_path
+      - B608  # hardcoded_sql_expressions
+      - B609  # linux_commands_wildcard_injection
+      - B610  # django_extra_used
+      - B611  # django_rawsql_used
+      - B701  # jinja2_autoescape_false
+      - B702  # use_of_mako_templates
+      - B703  # django_mark_safe
+    
+    skips:
+      - "*/tests/*"
+      - "*/test_*.py"
+      - "*/*_test.py"
+    
+    exclude_dirs:
+      - /tmp
+      - /var/tmp
+      - .git
+      - __pycache__
+      - node_modules
+      - .pytest_cache
+      - .coverage
+      
+  safety-config.json: |
+    {
+      "ignore": [],
+      "continue-on-error": false,
+      "full-report": true,
+      "output": "json"
+    }
+    
+  semgrep-config.yaml: |
+    # Semgrep Security Rules Configuration
+    rules:
+      - id: django-sql-injection
+        pattern: |
+          cursor.execute($QUERY, ...)
+        message: Potential SQL injection vulnerability
+        languages: [python]
+        severity: ERROR
+        
+      - id: django-xss
+        pattern: |
+          mark_safe($DATA)
+        message: Potential XSS vulnerability with mark_safe
+        l

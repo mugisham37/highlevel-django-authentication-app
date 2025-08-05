@@ -1,0 +1,153 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: enterprise-auth-config
+  namespace: enterprise-auth
+  labels:
+    app.kubernetes.io/name: enterprise-auth
+    app.kubernetes.io/component: config
+data:
+  # Django settings
+  DJANGO_SETTINGS_MODULE: "enterprise_auth.settings.production"
+  DEBUG: "False"
+  ALLOWED_HOSTS: "auth.example.com,auth-internal.example.com"
+  
+  # Database settings
+  DATABASE_HOST: "postgres"
+  DATABASE_PORT: "5432"
+  DATABASE_NAME: "enterprise_auth"
+  DATABASE_USER: "enterprise_auth_user"
+  
+  # Redis settings
+  REDIS_HOST: "redis"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  
+  # Cache settings
+  CACHE_TIMEOUT: "3600"
+  SESSION_CACHE_TIMEOUT: "1800"
+  
+  # Security settings
+  SECURE_SSL_REDIRECT: "True"
+  SECURE_HSTS_SECONDS: "31536000"
+  SECURE_HSTS_INCLUDE_SUBDOMAINS: "True"
+  SECURE_HSTS_PRELOAD: "True"
+  SECURE_CONTENT_TYPE_NOSNIFF: "True"
+  SECURE_BROWSER_XSS_FILTER: "True"
+  X_FRAME_OPTIONS: "DENY"
+  
+  # OAuth settings
+  GOOGLE_CLIENT_ID: "your-google-client-id"
+  GITHUB_CLIENT_ID: "your-github-client-id"
+  MICROSOFT_CLIENT_ID: "your-microsoft-client-id"
+  
+  # External service settings
+  TWILIO_ACCOUNT_SID: "your-twilio-account-sid"
+  AWS_ACCESS_KEY_ID: "your-aws-access-key"
+  AWS_REGION: "us-east-1"
+  AWS_S3_BUCKET: "enterprise-auth-media"
+  
+  # Logging settings
+  LOG_LEVEL: "INFO"
+  STRUCTURED_LOGGING: "True"
+  
+  # Performance settings
+  GUNICORN_WORKERS: "4"
+  GUNICORN_WORKER_CLASS: "gevent"
+  GUNICORN_WORKER_CONNECTIONS: "1000"
+  GUNICORN_MAX_REQUESTS: "1000"
+  
+  # Celery settings
+  CELERY_BROKER_URL: "redis://redis:6379/1"
+  CELERY_RESULT_BACKEND: "redis://redis:6379/2"
+  CELERY_WORKER_CONCURRENCY: "4"
+  
+  # Rate limiting
+  RATE_LIMIT_ENABLE: "True"
+  RATE_LIMIT_PER_IP: "1000/hour"
+  RATE_LIMIT_PER_USER: "5000/hour"
+  
+  # MFA settings
+  MFA_TOTP_ISSUER: "Enterprise Auth"
+  MFA_SMS_PROVIDER: "twilio"
+  
+  # Session settings
+  SESSION_COOKIE_SECURE: "True"
+  SESSION_COOKIE_HTTPONLY: "True"
+  SESSION_COOKIE_SAMESITE: "Strict"
+  SESSION_EXPIRE_AT_BROWSER_CLOSE: "True"
+  
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: enterprise-auth
+  labels:
+    app.kubernetes.io/name: enterprise-auth
+    app.kubernetes.io/component: nginx
+data:
+  nginx.conf: |
+    upstream django {
+        server enterprise-auth-web:8000;
+    }
+    
+    server {
+        listen 80;
+        server_name auth.example.com;
+        return 301 https://$server_name$request_uri;
+    }
+    
+    server {
+        listen 443 ssl http2;
+        server_name auth.example.com;
+        
+        ssl_certificate /etc/ssl/certs/tls.crt;
+        ssl_certificate_key /etc/ssl/private/tls.key;
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-RSA-AES256-GCM-SHA512:DHE-RSA-AES256-GCM-SHA512:ECDHE-RSA-AES256-GCM-SHA384:DHE-RSA-AES256-GCM-SHA384;
+        ssl_prefer_server_ciphers off;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 10m;
+        
+        # Security headers
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options DENY always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        
+        # Rate limiting
+        limit_req_zone $binary_remote_addr zone=auth:10m rate=10r/s;
+        limit_req zone=auth burst=20 nodelay;
+        
+        client_max_body_size 10M;
+        
+        location / {
+            proxy_pass http://django;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_connect_timeout 30s;
+            proxy_send_timeout 30s;
+            proxy_read_timeout 30s;
+        }
+        
+        location /static/ {
+            alias /app/static/;
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
+        
+        location /media/ {
+            alias /app/media/;
+            expires 1y;
+            add_header Cache-Control "public";
+        }
+        
+        location /health/ {
+            access_log off;
+            proxy_pass http://django;
+        }
+    }

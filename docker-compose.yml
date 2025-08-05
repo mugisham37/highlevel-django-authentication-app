@@ -1,0 +1,93 @@
+# Development Docker Compose
+version: "3.8"
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: application
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_SETTINGS_MODULE=enterprise_auth.settings.development
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/enterprise_auth
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    volumes:
+      - .:/app
+      - media_volume:/app/media
+      - static_volume:/app/static
+    depends_on:
+      - db
+      - redis
+    command: python manage.py runserver 0.0.0.0:8000
+
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: application
+    environment:
+      - DJANGO_SETTINGS_MODULE=enterprise_auth.settings.development
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/enterprise_auth
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
+    command: celery -A enterprise_auth worker -l info
+
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: application
+    environment:
+      - DJANGO_SETTINGS_MODULE=enterprise_auth.settings.development
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/enterprise_auth
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+      - redis
+    command: celery -A enterprise_auth beat -l info
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=enterprise_auth
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./deployment/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - static_volume:/app/static
+      - media_volume:/app/media
+    depends_on:
+      - web
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_volume:
+  static_volume:

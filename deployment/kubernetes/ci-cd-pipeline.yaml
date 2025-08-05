@@ -1,0 +1,485 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ci-cd-config
+  namespace: enterprise-auth
+data:
+  pipeline.yaml: |
+    # Comprehensive CI/CD Pipeline Configuration for Enterprise Auth Backend
+    
+    stages:
+      - security-scan
+      - test
+      - build
+      - deploy-staging
+      - integration-test
+      - deploy-production
+      - post-deployment-verification
+    
+    variables:
+      DOCKER_REGISTRY: "your-registry.com"
+      IMAGE_NAME: "enterprise-auth"
+      STAGING_NAMESPACE: "enterprise-auth-staging"
+      PRODUCTION_NAMESPACE: "enterprise-auth"
+      SECURITY_SCAN_THRESHOLD: "HIGH"
+      TEST_COVERAGE_THRESHOLD: "90"
+    
+    security-scan:
+      stage: security-scan
+      image: aquasec/trivy:latest
+      script:
+        - echo "Running security vulnerability scan..."
+        - trivy fs --exit-code 1 --severity HIGH,CRITICAL .
+        - trivy config --exit-code 1 --severity HIGH,CRITICAL .
+        - bandit -r . -f json -o bandit-report.json
+        - safety check --json --output safety-report.json
+      artifacts:
+        reports:
+          security: 
+            - bandit-report.json
+            - safety-report.json
+        expire_in: 1 week
+      allow_failure: false
+    
+    unit-tests:
+      stage: test
+      image: python:3.11
+      services:
+        - postgres:15
+        - redis:7
+      variables:
+        POSTGRES_DB: test_enterprise_auth
+        POSTGRES_USER: test_user
+        POSTGRES_PASSWORD: test_password
+        REDIS_URL: redis://redis:6379/0
+        DATABASE_URL: postgresql://test_user:test_password@postgres:5432/test_enterprise_auth
+      before_script:
+        - pip install -r requirements/test.txt
+        - python manage.py migrate --settings=enterprise_auth.settings.test
+      script:
+        - echo "Running unit tests..."
+        - pytest --cov=. --cov-report=xml --cov-report=html --cov-fail-under=$TEST_COVERAGE_THRESHOLD
+        - python manage.py test --settings=enterprise_auth.settings.test
+      artifacts:
+        reports:
+          coverage_report:
+            coverage_format: cobertura
+            path: coverage.xml
+        paths:
+          - htmlcov/
+        expire_in: 1 week
+      coverage: '/TOTAL.*\s+(\d+%)$/'
+    
+    integration-tests:
+      stage: test
+      image: python:3.11
+      services:
+        - postgres:15
+        - redis:7
+      variables:
+        POSTGRES_DB: integration_test_db
+        POSTGRES_USER: test_user
+        POSTGRES_PASSWORD: test_password
+        REDIS_URL: redis://redis:6379/1
+        DATABASE_URL: postgresql://test_user:test_password@postgres:5432/integration_test_db
+      before_script:
+        - pip install -r requirements/test.txt
+        - python manage.py migrate --settings=enterprise_auth.settings.test
+        - python manage.py loaddata fixtures/test_data.json --settings=enterprise_auth.settings.test
+      script:
+        - echo "Running integration tests..."
+        - pytest tests/integration/ -v --tb=short
+        - python manage.py test tests.integration --settings=enterprise_auth.settings.test
+      artifacts:
+        reports:
+          junit: integration-test-results.xml
+        expire_in: 1 week
+    
+    performance-tests:
+      stage: test
+      image: python:3.11
+      services:
+        - postgres:15
+        - redis:7
+      variables:
+        POSTGRES_DB: perf_test_db
+        POSTGRES_USER: test_user
+        POSTGRES_PASSWORD: test_password
+        REDIS_URL: redis://redis:6379/2
+        DATABASE_URL: postgresql://test_user:test_password@postgres:5432/perf_test_db
+      before_script:
+        - pip install -r requirements/test.txt
+        - python manage.py migrate --settings=enterprise_auth.settings.test
+      script:
+        - echo "Running performance tests..."
+        - locust --headless --users 100 --spawn-rate 10 --run-time 5m --host http://localhost:8000
+        - pytest tests/performance/ --benchmark-only --benchmark-json=benchmark.json
+      artifacts:
+        reports:
+          performance: benchmark.json
+        expire_in: 1 week
+    
+    build-image:
+      stage: build
+      image: docker:latest
+      services:
+        - docker:dind
+      variables:
+        DOCKER_DRIVER: overlay2
+        DOCKER_TLS_CERTDIR: "/certs"
+      before_script:
+        - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+      script:
+        - echo "Building Docker image..."
+        - export IMAGE_TAG=${CI_COMMIT_SHA:0:8}
+        - docker build --target production -t $DOCKER_REGISTRY/$IMAGE_NAME:$IMAGE_TAG .
+        - docker build --target production -t $DOCKER_REGISTRY/$IMAGE_NAME:latest .
+        - echo "Scanning Docker image for vulnerabilities..."
+        - trivy image --exit-code 1 --severity HIGH,CRITICAL $DOCKER_REGISTRY/$IMAGE_NAME:$IMAGE_TAG
+        - echo "Pushing Docker image..."
+        - docker push $DOCKER_REGISTRY/$IMAGE_NAME:$IMAGE_TAG
+        - docker push $DOCKER_REGISTRY/$IMAGE_NAME:latest
+      only:
+        - main
+        - develop
+    
+    deploy-staging:
+      stage: deploy-staging
+      image: bitnami/kubectl:latest
+      environment:
+        name: staging
+        url: https://staging.enterprise-auth.com
+      before_script:
+        - kubectl config use-context staging-cluster
+      script:
+        - echo "Deploying to staging environment..."
+        - export IMAGE_TAG=${CI_COMMIT_SHA:0:8}
+        - envsubst < deployment/kubernetes/web-deployment.yaml | kubectl apply -f -
+        - envsubst < deployment/kubernetes/celery-deployment.yaml | kubectl apply -f -
+        - kubectl apply -f deployment/kubernetes/configmap.yaml
+        - kubectl apply -f deployment/kubernetes/secrets.yaml
+        - kubectl apply -f deployment/kubernetes/hpa.yaml
+        - kubectl rollout status deployment/enterprise-auth-web -n $STAGING_NAMESPACE --timeout=600s
+        - kubectl rollout status deployment/enterprise-auth-celery -n $STAGING_NAMESPACE --timeout=600s
+      only:
+        - develop
+    
+    staging-smoke-tests:
+      stage: integration-test
+      image: curlimages/curl:latest
+      environment:
+        name: staging
+      script:
+        - echo "Running staging smoke tests..."
+        - sleep 30  # Wait for services to be ready
+        - curl -f https://staging.enterprise-auth.com/health/ || exit 1
+        - curl -f https://staging.enterprise-auth.com/health/db/ || exit 1
+        - curl -f https://staging.enterprise-auth.com/health/cache/ || exit 1
+        - curl -f https://staging.enterprise-auth.com/api/v1/health/ || exit 1
+        - echo "All staging smoke tests passed"
+      only:
+        - develop
+    
+    staging-e2e-tests:
+      stage: integration-test
+      image: cypress/included:latest
+      environment:
+        name: staging
+      variables:
+        CYPRESS_BASE_URL: https://staging.enterprise-auth.com
+      script:
+        - echo "Running end-to-end tests against staging..."
+        - cypress run --record --key $CYPRESS_RECORD_KEY
+      artifacts:
+        when: always
+        paths:
+          - cypress/videos/
+          - cypress/screenshots/
+        expire_in: 1 week
+      only:
+        - develop
+    
+    deploy-production:
+      stage: deploy-production
+      image: bitnami/kubectl:latest
+      environment:
+        name: production
+        url: https://enterprise-auth.com
+      before_script:
+        - kubectl config use-context production-cluster
+      script:
+        - echo "Deploying to production environment..."
+        - export IMAGE_TAG=${CI_COMMIT_SHA:0:8}
+        - echo "Creating pre-deployment backup..."
+        - kubectl exec -n $PRODUCTION_NAMESPACE deployment/postgres -- /app/deployment/scripts/backup-database.sh
+        - echo "Validating configuration..."
+        - python deployment/scripts/config-validation.py --environment production
+        - echo "Performing zero-downtime deployment..."
+        - envsubst < deployment/kubernetes/web-deployment.yaml | kubectl apply -f -
+        - envsubst < deployment/kubernetes/celery-deployment.yaml | kubectl apply -f -
+        - kubectl apply -f deployment/kubernetes/configmap.yaml
+        - kubectl apply -f deployment/kubernetes/secrets.yaml
+        - kubectl apply -f deployment/kubernetes/hpa.yaml
+        - kubectl rollout status deployment/enterprise-auth-web -n $PRODUCTION_NAMESPACE --timeout=900s
+        - kubectl rollout status deployment/enterprise-auth-celery -n $PRODUCTION_NAMESPACE --timeout=600s
+        - echo "Deployment completed successfully"
+      when: manual
+      only:
+        - main
+    
+    production-verification:
+      stage: post-deployment-verification
+      image: curlimages/curl:latest
+      environment:
+        name: production
+      script:
+        - echo "Running production verification tests..."
+        - sleep 60  # Wait for services to be fully ready
+        - curl -f https://enterprise-auth.com/health/ || exit 1
+        - curl -f https://enterprise-auth.com/health/db/ || exit 1
+        - curl -f https://enterprise-auth.com/health/cache/ || exit 1
+        - curl -f https://enterprise-auth.com/api/v1/health/ || exit 1
+        - echo "Testing authentication endpoints..."
+        - response=$(curl -s -o /dev/null -w "%{http_code}" -X POST https://enterprise-auth.com/api/v1/auth/login -H "Content-Type: application/json" -d '{}')
+        - if [ "$response" -ge 400 ] && [ "$response" -lt 500 ]; then echo "Auth endpoint test passed"; else echo "Auth endpoint test failed" && exit 1; fi
+        - echo "All production verification tests passed"
+      only:
+        - main
+    
+    rollback-production:
+      stage: deploy-production
+      image: bitnami/kubectl:latest
+      environment:
+        name: production
+      before_script:
+        - kubectl config use-context production-cluster
+      script:
+        - echo "Rolling back production deployment..."
+        - kubectl rollout undo deployment/enterprise-auth-web -n $PRODUCTION_NAMESPACE
+        - kubectl rollout undo deployment/enterprise-auth-celery -n $PRODUCTION_NAMESPACE
+        - kubectl rollout status deployment/enterprise-auth-web -n $PRODUCTION_NAMESPACE --timeout=600s
+        - kubectl rollout status deployment/enterprise-auth-celery -n $PRODUCTION_NAMESPACE --timeout=600s
+        - echo "Rollback completed successfully"
+      when: manual
+      only:
+        - main
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: security-scan-job
+  namespace: enterprise-auth
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: security-scanner
+            image: aquasec/trivy:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Running scheduled security scan..."
+              trivy image --format json --output /tmp/scan-results.json enterprise-auth:latest
+              # Send results to monitoring system
+              curl -X POST $WEBHOOK_URL -H "Content-Type: application/json" -d @/tmp/scan-results.json
+            env:
+            - name: WEBHOOK_URL
+              valueFrom:
+                secretRef:
+                  name: monitoring-secrets
+                  key: security-webhook-url
+          restartPolicy: OnFailure
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: backup-job
+  namespace: enterprise-auth
+spec:
+  schedule: "0 1 * * *"  # Daily at 1 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: enterprise-auth:latest
+            command:
+            - /bin/bash
+            - /app/deployment/scripts/backup-database.sh
+            env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretRef:
+                  name: enterprise-auth-secrets
+                  key: POSTGRES_PASSWORD
+            - name: BACKUP_ENCRYPTION_KEY
+              valueFrom:
+                secretRef:
+                  name: enterprise-auth-secrets
+                  key: BACKUP_ENCRYPTION_KEY
+            - name: BACKUP_S3_BUCKET
+              valueFrom:
+                configMapRef:
+                  name: enterprise-auth-config
+                  key: BACKUP_S3_BUCKET
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backups
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: backup-pvc
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-pvc
+  namespace: enterprise-auth
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: fast-ssd
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: config-validation-job
+  namespace: enterprise-auth
+spec:
+  schedule: "0 */6 * * *"  # Every 6 hours
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: config-validator
+            image: enterprise-auth:latest
+            command:
+            - python
+            - /app/deployment/scripts/config-validation.py
+            - --environment
+            - production
+            - --export
+            - /tmp/validation-results.json
+            envFrom:
+            - configMapRef:
+                name: enterprise-auth-config
+            - secretRef:
+                name: enterprise-auth-secrets
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ci-cd-webhook
+  namespace: enterprise-auth
+spec:
+  selector:
+    app: ci-cd-webhook
+  ports:
+  - port: 8080
+    targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ci-cd-webhook
+  namespace: enterprise-auth
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ci-cd-webhook
+  template:
+    metadata:
+      labels:
+        app: ci-cd-webhook
+    spec:
+      containers:
+      - name: webhook
+        image: webhook/webhook:latest
+        ports:
+        - containerPort: 8080
+        args:
+        - -verbose
+        - -hooks=/etc/webhook/hooks.json
+        - -hotreload
+        volumeMounts:
+        - name: webhook-config
+          mountPath: /etc/webhook
+        env:
+        - name: WEBHOOK_SECRET
+          valueFrom:
+            secretRef:
+              name: ci-cd-secrets
+              key: webhook-secret
+      volumes:
+      - name: webhook-config
+        configMap:
+          name: webhook-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: webhook-config
+  namespace: enterprise-auth
+data:
+  hooks.json: |
+    [
+      {
+        "id": "deploy-staging",
+        "execute-command": "/scripts/deploy-staging.sh",
+        "command-working-directory": "/app",
+        "response-message": "Deploying to staging environment",
+        "trigger-rule": {
+          "and": [
+            {
+              "match": {
+                "type": "payload-hash-sha1",
+                "secret": "{{ getenv "WEBHOOK_SECRET" }}",
+                "parameter": {
+                  "source": "header",
+                  "name": "X-Hub-Signature"
+                }
+              }
+            },
+            {
+              "match": {
+                "type": "value",
+                "value": "refs/heads/develop",
+                "parameter": {
+                  "source": "payload",
+                  "name": "ref"
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "id": "security-alert",
+        "execute-command": "/scripts/security-alert.sh",
+        "command-working-directory": "/app",
+        "response-message": "Processing security alert",
+        "trigger-rule": {
+          "match": {
+            "type": "value",
+            "value": "security-scan",
+            "parameter": {
+              "source": "payload",
+              "name": "event_type"
+            }
+          }
+        }
+      }
+    ]

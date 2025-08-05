@@ -42,6 +42,9 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'enterprise_auth.core.utils.correlation.CorrelationIDMiddleware',
+    'enterprise_auth.core.middleware.performance.PerformanceMonitoringMiddleware',
+    'enterprise_auth.core.middleware.performance.DatabaseQueryMonitoringMiddleware',
+    'enterprise_auth.core.middleware.performance.CacheMonitoringMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -354,22 +357,55 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_BEAT_SCHEDULE = {
     # Cache warming tasks
     'warm-user-cache': {
-        'task': 'enterprise_auth.core.tasks.cache_tasks.warm_user_cache',
+        'task': 'enterprise_auth.core.tasks.performance_tasks.warm_user_cache',
         'schedule': 1800.0,  # Every 30 minutes
         'options': {'queue': 'cache_warming'}
     },
     'warm-oauth-providers-cache': {
-        'task': 'enterprise_auth.core.tasks.cache_tasks.warm_oauth_providers_cache',
+        'task': 'enterprise_auth.core.tasks.performance_tasks.warm_oauth_providers_cache',
         'schedule': 3600.0,  # Every hour
         'options': {'queue': 'cache_warming'}
     },
     'warm-role-permissions-cache': {
-        'task': 'enterprise_auth.core.tasks.cache_tasks.warm_role_permissions_cache',
+        'task': 'enterprise_auth.core.tasks.performance_tasks.warm_role_permissions_cache',
         'schedule': 3600.0,  # Every hour
         'options': {'queue': 'cache_warming'}
     },
     
-    # Cache cleanup tasks
+    # Comprehensive cache warming (less frequent)
+    'comprehensive-cache-warming': {
+        'task': 'enterprise_auth.core.tasks.performance_tasks.comprehensive_cache_warming',
+        'schedule': 21600.0,  # Every 6 hours
+        'options': {'queue': 'cache_warming'}
+    },
+    
+    # Cache cleanup and optimization
+    'cleanup-expired-cache-entries': {
+        'task': 'enterprise_auth.core.tasks.performance_tasks.cleanup_expired_cache_entries',
+        'schedule': 7200.0,  # Every 2 hours
+        'options': {'queue': 'maintenance'}
+    },
+    'analyze-cache-performance': {
+        'task': 'enterprise_auth.core.tasks.performance_tasks.analyze_cache_performance',
+        'schedule': 3600.0,  # Every hour
+        'options': {'queue': 'performance_analysis'}
+    },
+    
+    # Database performance monitoring
+    'database-performance-analysis': {
+        'task': 'enterprise_auth.core.tasks.performance_tasks.database_performance_analysis',
+        'schedule': 1800.0,  # Every 30 minutes
+        'options': {'queue': 'performance_analysis'}
+    },
+    
+    # Performance metrics updates
+    'update-performance-metrics': {
+        'task': 'enterprise_auth.core.tasks.performance_tasks.update_performance_metrics',
+        'schedule': 300.0,  # Every 5 minutes
+        'options': {'queue': 'monitoring'}
+    },
+    
+    # Legacy tasks (to be migrated)
     'cleanup-expired-sessions': {
         'task': 'enterprise_auth.core.tasks.cache_tasks.cleanup_expired_sessions',
         'schedule': 3600.0,  # Every hour
@@ -379,13 +415,6 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'enterprise_auth.core.tasks.cache_tasks.cleanup_rate_limit_counters',
         'schedule': 7200.0,  # Every 2 hours
         'options': {'queue': 'maintenance'}
-    },
-    
-    # Comprehensive cache warming (less frequent)
-    'comprehensive-cache-warming': {
-        'task': 'enterprise_auth.core.tasks.cache_tasks.comprehensive_cache_warming',
-        'schedule': 21600.0,  # Every 6 hours
-        'options': {'queue': 'cache_warming'}
     },
     
     # SMS-related tasks
@@ -403,6 +432,12 @@ CELERY_BEAT_SCHEDULE = {
 
 # Celery task routing
 CELERY_TASK_ROUTES = {
+    'enterprise_auth.core.tasks.performance_tasks.warm_*': {'queue': 'cache_warming'},
+    'enterprise_auth.core.tasks.performance_tasks.comprehensive_cache_warming': {'queue': 'cache_warming'},
+    'enterprise_auth.core.tasks.performance_tasks.cleanup_*': {'queue': 'maintenance'},
+    'enterprise_auth.core.tasks.performance_tasks.analyze_*': {'queue': 'performance_analysis'},
+    'enterprise_auth.core.tasks.performance_tasks.database_*': {'queue': 'performance_analysis'},
+    'enterprise_auth.core.tasks.performance_tasks.update_*': {'queue': 'monitoring'},
     'enterprise_auth.core.tasks.cache_tasks.*': {'queue': 'cache_warming'},
     'enterprise_auth.core.tasks.cache_tasks.cleanup_*': {'queue': 'maintenance'},
     'enterprise_auth.core.tasks.sms_tasks.*': {'queue': 'sms_processing'},
@@ -563,6 +598,62 @@ LOGGING = {
         'level': 'WARNING',
     },
 }
+
+# Performance monitoring configuration
+PERFORMANCE_MONITORING_ENABLED = config('PERFORMANCE_MONITORING_ENABLED', default=True, cast=bool)
+SLOW_REQUEST_THRESHOLD = config('SLOW_REQUEST_THRESHOLD', default=1.0, cast=float)  # seconds
+VERY_SLOW_REQUEST_THRESHOLD = config('VERY_SLOW_REQUEST_THRESHOLD', default=5.0, cast=float)  # seconds
+SLOW_QUERY_THRESHOLD = config('SLOW_QUERY_THRESHOLD', default=1.0, cast=float)  # seconds
+MONITOR_ALL_DB_QUERIES = config('MONITOR_ALL_DB_QUERIES', default=False, cast=bool)
+ADD_PERFORMANCE_HEADERS = config('ADD_PERFORMANCE_HEADERS', default=False, cast=bool)
+
+# Performance monitoring excluded paths
+PERFORMANCE_MONITORING_EXCLUDED_PATHS = [
+    '/health/',
+    '/metrics/',
+    '/static/',
+    '/media/',
+    '/admin/jsi18n/',
+    '/favicon.ico'
+]
+
+# Celery task monitoring
+CELERY_SLOW_TASK_THRESHOLD = config('CELERY_SLOW_TASK_THRESHOLD', default=30.0, cast=float)  # seconds
+
+# Database optimization settings
+DB_OPTIMIZATION_ENABLED = config('DB_OPTIMIZATION_ENABLED', default=True, cast=bool)
+AUTO_VACUUM_ENABLED = config('AUTO_VACUUM_ENABLED', default=False, cast=bool)  # Dangerous in production
+AUTO_INDEX_CREATION = config('AUTO_INDEX_CREATION', default=False, cast=bool)  # Dangerous in production
+
+# Cache performance settings
+CACHE_WARMING_ENABLED = config('CACHE_WARMING_ENABLED', default=True, cast=bool)
+CACHE_ANALYTICS_ENABLED = config('CACHE_ANALYTICS_ENABLED', default=True, cast=bool)
+CACHE_HIT_RATE_TARGET = config('CACHE_HIT_RATE_TARGET', default=85.0, cast=float)  # percentage
+
+# SLA monitoring targets
+SLA_TARGETS = {
+    'api_response_time_ms': config('SLA_API_RESPONSE_TIME_MS', default=100, cast=int),
+    'auth_response_time_ms': config('SLA_AUTH_RESPONSE_TIME_MS', default=200, cast=int),
+    'cache_hit_rate_percent': config('SLA_CACHE_HIT_RATE_PERCENT', default=85, cast=int),
+    'system_availability_percent': config('SLA_SYSTEM_AVAILABILITY_PERCENT', default=99.9, cast=float),
+    'database_response_time_ms': config('SLA_DATABASE_RESPONSE_TIME_MS', default=50, cast=int)
+}
+
+# Performance alerting thresholds
+PERFORMANCE_ALERT_THRESHOLDS = {
+    'response_time_ms': config('ALERT_RESPONSE_TIME_MS', default=500, cast=int),
+    'error_rate_percent': config('ALERT_ERROR_RATE_PERCENT', default=5, cast=int),
+    'cache_hit_rate_percent': config('ALERT_CACHE_HIT_RATE_PERCENT', default=70, cast=int),
+    'database_connections_percent': config('ALERT_DB_CONNECTIONS_PERCENT', default=80, cast=int)
+}
+
+# Prometheus metrics configuration
+PROMETHEUS_METRICS_ENABLED = config('PROMETHEUS_METRICS_ENABLED', default=True, cast=bool)
+PROMETHEUS_METRICS_PATH = config('PROMETHEUS_METRICS_PATH', default='/metrics')
+
+# Load testing and benchmarking
+LOAD_TESTING_ENABLED = config('LOAD_TESTING_ENABLED', default=False, cast=bool)
+BENCHMARK_BASELINE_ENABLED = config('BENCHMARK_BASELINE_ENABLED', default=True, cast=bool)
 
 # Monitoring and observability
 SENTRY_DSN = config('SENTRY_DSN', default='')

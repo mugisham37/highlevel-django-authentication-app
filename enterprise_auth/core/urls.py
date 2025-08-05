@@ -105,6 +105,9 @@ urlpatterns = [
     path('health/cache/', cache_stats, name='cache_stats'),
     path('health/system/', system_health, name='system_health'),
     
+    # Prometheus metrics endpoint (public for monitoring systems)
+    path('metrics/', lambda request: __import__('enterprise_auth.core.views.performance', fromlist=['prometheus_metrics']).prometheus_metrics(request), name='prometheus_metrics'),
+    
     # JWT token management endpoints
     path('auth/login/', login, name='login'),
     path('auth/refresh/', refresh_token, name='refresh_token'),
@@ -202,6 +205,9 @@ urlpatterns = [
     path('rbac/bulk-assign-roles/', bulk_assign_roles, name='rbac_bulk_assign_roles'),
     path('rbac/users/<uuid:user_id>/roles/', user_roles, name='rbac_user_roles'),
     path('rbac/audit-log/', permission_audit_log, name='rbac_audit_log'),
+    
+    # Performance monitoring endpoints
+    path('performance/', include('enterprise_auth.core.urls.performance')),
     
     # Include router URLs for viewsets
     path('', include(router.urls)),

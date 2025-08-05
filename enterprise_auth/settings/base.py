@@ -41,7 +41,10 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
-    'enterprise_auth.core.utils.correlation.CorrelationIDMiddleware',
+    'enterprise_auth.core.monitoring.middleware.CorrelationIDMiddleware',
+    'enterprise_auth.core.monitoring.middleware.RequestContextMiddleware',
+    'enterprise_auth.core.monitoring.middleware.MonitoringMiddleware',
+    'enterprise_auth.core.monitoring.middleware.SecurityMonitoringMiddleware',
     'enterprise_auth.core.middleware.performance.PerformanceMonitoringMiddleware',
     'enterprise_auth.core.middleware.performance.DatabaseQueryMonitoringMiddleware',
     'enterprise_auth.core.middleware.performance.CacheMonitoringMiddleware',
@@ -355,6 +358,48 @@ CELERY_TIMEZONE = TIME_ZONE
 
 # Celery Beat Schedule for periodic tasks
 CELERY_BEAT_SCHEDULE = {
+    # Monitoring tasks
+    'update-daily-business-metrics': {
+        'task': 'enterprise_auth.core.monitoring.tasks.update_daily_business_metrics',
+        'schedule': 86400.0,  # Every 24 hours
+        'options': {'queue': 'monitoring'}
+    },
+    'update-monthly-business-metrics': {
+        'task': 'enterprise_auth.core.monitoring.tasks.update_monthly_business_metrics',
+        'schedule': 2592000.0,  # Every 30 days
+        'options': {'queue': 'monitoring'}
+    },
+    'run-system-health-checks': {
+        'task': 'enterprise_auth.core.monitoring.tasks.run_system_health_checks',
+        'schedule': 300.0,  # Every 5 minutes
+        'options': {'queue': 'monitoring'}
+    },
+    'cleanup-monitoring-data': {
+        'task': 'enterprise_auth.core.monitoring.tasks.cleanup_monitoring_data',
+        'schedule': 86400.0,  # Every 24 hours
+        'options': {'queue': 'maintenance'}
+    },
+    'generate-compliance-report': {
+        'task': 'enterprise_auth.core.monitoring.tasks.generate_compliance_report',
+        'schedule': 604800.0,  # Every 7 days
+        'options': {'queue': 'reporting'}
+    },
+    'analyze-security-metrics': {
+        'task': 'enterprise_auth.core.monitoring.tasks.analyze_security_metrics',
+        'schedule': 3600.0,  # Every hour
+        'options': {'queue': 'security_analysis'}
+    },
+    'update-sla-compliance-metrics': {
+        'task': 'enterprise_auth.core.monitoring.tasks.update_sla_compliance_metrics',
+        'schedule': 1800.0,  # Every 30 minutes
+        'options': {'queue': 'monitoring'}
+    },
+    'send-monitoring-digest': {
+        'task': 'enterprise_auth.core.monitoring.tasks.send_monitoring_digest',
+        'schedule': 86400.0,  # Every 24 hours
+        'options': {'queue': 'notifications'}
+    },
+    
     # Cache warming tasks
     'warm-user-cache': {
         'task': 'enterprise_auth.core.tasks.performance_tasks.warm_user_cache',
@@ -432,6 +477,14 @@ CELERY_BEAT_SCHEDULE = {
 
 # Celery task routing
 CELERY_TASK_ROUTES = {
+    # Monitoring tasks
+    'enterprise_auth.core.monitoring.tasks.*': {'queue': 'monitoring'},
+    'enterprise_auth.core.monitoring.tasks.cleanup_*': {'queue': 'maintenance'},
+    'enterprise_auth.core.monitoring.tasks.generate_*': {'queue': 'reporting'},
+    'enterprise_auth.core.monitoring.tasks.analyze_*': {'queue': 'security_analysis'},
+    'enterprise_auth.core.monitoring.tasks.send_*': {'queue': 'notifications'},
+    
+    # Performance tasks
     'enterprise_auth.core.tasks.performance_tasks.warm_*': {'queue': 'cache_warming'},
     'enterprise_auth.core.tasks.performance_tasks.comprehensive_cache_warming': {'queue': 'cache_warming'},
     'enterprise_auth.core.tasks.performance_tasks.cleanup_*': {'queue': 'maintenance'},
@@ -655,7 +708,43 @@ PROMETHEUS_METRICS_PATH = config('PROMETHEUS_METRICS_PATH', default='/metrics')
 LOAD_TESTING_ENABLED = config('LOAD_TESTING_ENABLED', default=False, cast=bool)
 BENCHMARK_BASELINE_ENABLED = config('BENCHMARK_BASELINE_ENABLED', default=True, cast=bool)
 
-# Monitoring and observability
+# Monitoring and observability configuration
+MONITORING_ENABLED = config('MONITORING_ENABLED', default=True, cast=bool)
+HEALTH_CHECK_ENABLED = config('HEALTH_CHECK_ENABLED', default=True, cast=bool)
+METRICS_COLLECTION_ENABLED = config('METRICS_COLLECTION_ENABLED', default=True, cast=bool)
+BUSINESS_METRICS_ENABLED = config('BUSINESS_METRICS_ENABLED', default=True, cast=bool)
+SECURITY_MONITORING_ENABLED = config('SECURITY_MONITORING_ENABLED', default=True, cast=bool)
+COMPLIANCE_MONITORING_ENABLED = config('COMPLIANCE_MONITORING_ENABLED', default=True, cast=bool)
+
+# Alert configuration
+ALERT_EMAIL_RECIPIENTS = config(
+    'ALERT_EMAIL_RECIPIENTS',
+    default='',
+    cast=lambda v: [email.strip() for email in v.split(',') if email.strip()]
+)
+ALERT_SLACK_WEBHOOK_URL = config('ALERT_SLACK_WEBHOOK_URL', default='')
+ALERT_PAGERDUTY_INTEGRATION_KEY = config('ALERT_PAGERDUTY_INTEGRATION_KEY', default='')
+
+# Monitoring digest configuration
+MONITORING_DIGEST_RECIPIENTS = config(
+    'MONITORING_DIGEST_RECIPIENTS',
+    default='',
+    cast=lambda v: [email.strip() for email in v.split(',') if email.strip()]
+)
+
+# Health check configuration
+HEALTH_CHECK_TIMEOUT_SECONDS = config('HEALTH_CHECK_TIMEOUT_SECONDS', default=5, cast=int)
+HEALTH_CHECK_CACHE_TTL_SECONDS = config('HEALTH_CHECK_CACHE_TTL_SECONDS', default=30, cast=int)
+
+# Metrics retention configuration
+METRICS_RETENTION_DAYS = config('METRICS_RETENTION_DAYS', default=90, cast=int)
+ALERT_HISTORY_RETENTION_DAYS = config('ALERT_HISTORY_RETENTION_DAYS', default=30, cast=int)
+
+# Dashboard configuration
+GRAFANA_URL = config('GRAFANA_URL', default='')
+GRAFANA_API_KEY = config('GRAFANA_API_KEY', default='')
+
+# Sentry configuration
 SENTRY_DSN = config('SENTRY_DSN', default='')
 if SENTRY_DSN:
     import sentry_sdk
@@ -670,13 +759,14 @@ if SENTRY_DSN:
             CeleryIntegration(monitor_beat_tasks=True),
             LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
         ],
-        traces_sample_rate=0.1,
-        send_default_pii=True,
+        traces_sample_rate=config('SENTRY_TRACES_SAMPLE_RATE', default=0.1, cast=float),
+        send_default_pii=config('SENTRY_SEND_DEFAULT_PII', default=True, cast=bool),
+        environment=config('ENVIRONMENT', default='development'),
         before_send=lambda event, hint: {
             **event,
             'extra': {
                 **event.get('extra', {}),
-                'correlation_id': get_correlation_id(),
+                'correlation_id': getattr(threading.current_thread(), 'correlation_id', None),
             }
-        } if 'get_correlation_id' in globals() else event,
+        },
     )

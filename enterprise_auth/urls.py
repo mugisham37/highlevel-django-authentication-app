@@ -90,6 +90,9 @@ urlpatterns = [
     
     # API integration endpoints
     path('api/v1/', include('enterprise_auth.api.urls')),
+    
+    # Monitoring and observability endpoints
+    path('monitoring/', include('enterprise_auth.core.monitoring.urls')),
 ]
 
 # Serve static and media files in development

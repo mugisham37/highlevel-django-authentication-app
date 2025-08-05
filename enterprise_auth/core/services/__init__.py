@@ -70,6 +70,12 @@ from .session_service import (
     extend_session_expiration,
     get_session_statistics,
 )
+from .session_security_service import (
+    SessionSecurityMonitoringService,
+    session_security_service,
+    AnomalyScore,
+    ThreatAnalysis,
+)
 
 __all__ = [
     'PasswordService',
@@ -129,4 +135,9 @@ __all__ = [
     'cleanup_orphaned_device_info',
     'extend_session_expiration',
     'get_session_statistics',
+    # Session security monitoring service
+    'SessionSecurityMonitoringService',
+    'session_security_service',
+    'AnomalyScore',
+    'ThreatAnalysis',
 ]

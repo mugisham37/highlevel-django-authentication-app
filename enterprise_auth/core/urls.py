@@ -171,6 +171,9 @@ urlpatterns = [
     # Backup codes standalone validation endpoint
     path('mfa/validate-backup-code/', BackupCodeValidationView.as_view(), name='validate_backup_code_standalone'),
     
+    # Session security monitoring endpoints (will be added after migrations)
+    # path('security/sessions/monitor/', monitor_session, name='monitor_session'),
+    
     # Include router URLs for viewsets
     path('', include(router.urls)),
 ]

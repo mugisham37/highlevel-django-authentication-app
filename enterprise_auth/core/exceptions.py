@@ -868,3 +868,22 @@ class SessionSecurityError(SessionError):
             },
             correlation_id=correlation_id
         )
+
+
+class SecurityThreatDetectedError(SecurityError):
+    """Exception raised when a security threat is detected during session monitoring."""
+    
+    def __init__(self, session_id: str, threat_type: str, 
+                 risk_score: float, indicators: List[str] = None, 
+                 correlation_id: Optional[str] = None):
+        super().__init__(
+            message=f"Security threat detected: {threat_type}",
+            error_code="SECURITY_THREAT_DETECTED",
+            details={
+                "session_id": session_id,
+                "threat_type": threat_type,
+                "risk_score": risk_score,
+                "indicators": indicators or []
+            },
+            correlation_id=correlation_id
+        )

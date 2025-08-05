@@ -8,6 +8,7 @@ from .audit import AuditLog, ProfileChangeHistory
 from .jwt import RefreshToken, TokenBlacklist, JWTKeyRotation
 from .mfa import MFADevice, MFAAttempt
 from .session import UserSession, DeviceInfo, SessionActivity
+from .security import SecurityEvent, SessionSecurityEvent, ThreatIntelligence
 
 __all__ = [
     'BaseModel',
@@ -26,4 +27,7 @@ __all__ = [
     'UserSession',
     'DeviceInfo',
     'SessionActivity',
+    'SecurityEvent',
+    'SessionSecurityEvent',
+    'ThreatIntelligence',
 ]

@@ -21,6 +21,11 @@ from .session_views import (
     get_current_session,
     admin_get_session_statistics,
     admin_terminate_user_sessions,
+    # Enhanced concurrent session management views
+    get_concurrent_session_policy,
+    terminate_sessions_by_criteria,
+    detect_session_sharing,
+    resolve_session_conflicts,
 )
 
 __all__ = [
@@ -41,4 +46,9 @@ __all__ = [
     'get_current_session',
     'admin_get_session_statistics',
     'admin_terminate_user_sessions',
+    # Enhanced concurrent session management views
+    'get_concurrent_session_policy',
+    'terminate_sessions_by_criteria',
+    'detect_session_sharing',
+    'resolve_session_conflicts',
 ]

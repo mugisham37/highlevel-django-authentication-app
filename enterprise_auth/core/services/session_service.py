@@ -21,6 +21,7 @@ from ..models.session import UserSession, DeviceInfo, SessionActivity
 from ..models.user import UserProfile
 from ..utils.device_fingerprinting import DeviceFingerprinter, generate_device_fingerprint
 from ..utils.geolocation import GeolocationService, get_client_ip, enrich_session_with_location
+from ..exceptions import SessionLimitExceededError
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,12 @@ class SessionService:
         self.session_timeout_hours = getattr(settings, 'SESSION_TIMEOUT_HOURS', 24)
         self.max_concurrent_sessions = getattr(settings, 'MAX_CONCURRENT_SESSIONS', 5)
         self.trusted_device_threshold = getattr(settings, 'TRUSTED_DEVICE_THRESHOLD', 0.8)
+        
+        # Concurrent session management policies
+        self.concurrent_session_policy = getattr(settings, 'CONCURRENT_SESSION_POLICY', 'terminate_oldest')
+        self.session_sharing_detection_enabled = getattr(settings, 'SESSION_SHARING_DETECTION_ENABLED', True)
+        self.session_sharing_threshold_minutes = getattr(settings, 'SESSION_SHARING_THRESHOLD_MINUTES', 5)
+        self.max_concurrent_sessions_per_device = getattr(settings, 'MAX_CONCURRENT_SESSIONS_PER_DEVICE', 3)
     
     @transaction.atomic
     def create_session(self, user: UserProfile, request: HttpRequest, 
@@ -107,8 +114,22 @@ class SessionService:
             }
         )
         
-        # Enforce concurrent session limits
-        self._enforce_concurrent_session_limits(user)
+        # Check concurrent session limits before creating session
+        if self.concurrent_session_policy == 'deny_new':
+            active_sessions_count = UserSession.objects.filter(
+                user=user,
+                status='active'
+            ).count()
+            
+            if active_sessions_count >= self.max_concurrent_sessions:
+                raise SessionLimitExceededError(
+                    user_id=str(user.id),
+                    limit=self.max_concurrent_sessions
+                )
+        
+        # Enforce concurrent session limits (for other policies)
+        if self.concurrent_session_policy != 'deny_new':
+            self._enforce_concurrent_session_limits(user)
         
         # Update device trust status if applicable
         self._update_device_trust_status(device_info, user)
@@ -345,7 +366,7 @@ class SessionService:
     
     def _enforce_concurrent_session_limits(self, user: UserProfile) -> None:
         """
-        Enforce concurrent session limits for a user.
+        Enforce concurrent session limits for a user with configurable policies.
         
         Args:
             user: User to enforce limits for
@@ -353,17 +374,252 @@ class SessionService:
         active_sessions = UserSession.objects.filter(
             user=user,
             status='active'
-        ).order_by('last_activity')
+        ).select_related('device_info').order_by('last_activity')
         
-        if active_sessions.count() > self.max_concurrent_sessions:
-            # Terminate oldest sessions
-            sessions_to_terminate = active_sessions[:active_sessions.count() - self.max_concurrent_sessions]
+        total_sessions = active_sessions.count()
+        
+        if total_sessions > self.max_concurrent_sessions:
+            # Apply concurrent session policy
+            if self.concurrent_session_policy == 'terminate_oldest':
+                self._terminate_oldest_sessions(active_sessions, user)
+            elif self.concurrent_session_policy == 'terminate_lowest_risk':
+                self._terminate_lowest_risk_sessions(active_sessions, user)
+            elif self.concurrent_session_policy == 'terminate_untrusted_devices':
+                self._terminate_untrusted_device_sessions(active_sessions, user)
+            elif self.concurrent_session_policy == 'deny_new':
+                # This would be handled in session creation - raise exception
+                raise SessionLimitExceededError(
+                    f"User has reached maximum concurrent session limit of {self.max_concurrent_sessions}"
+                )
+        
+        # Check for session sharing if enabled
+        if self.session_sharing_detection_enabled:
+            self._detect_and_prevent_session_sharing(active_sessions, user)
+    
+    def _terminate_oldest_sessions(self, active_sessions, user: UserProfile) -> None:
+        """
+        Terminate oldest sessions to enforce limits.
+        
+        Args:
+            active_sessions: QuerySet of active sessions
+            user: User to enforce limits for
+        """
+        sessions_to_terminate = active_sessions[:active_sessions.count() - self.max_concurrent_sessions]
+        
+        for session in sessions_to_terminate:
+            self.terminate_session(
+                session.session_id,
+                reason='concurrent_session_limit_exceeded_oldest'
+            )
+            logger.info(f"Terminated oldest session {session.session_id} for user {user.email}")
+    
+    def _terminate_lowest_risk_sessions(self, active_sessions, user: UserProfile) -> None:
+        """
+        Terminate sessions with lowest risk scores to enforce limits.
+        
+        Args:
+            active_sessions: QuerySet of active sessions
+            user: User to enforce limits for
+        """
+        # Sort by risk score (ascending) to terminate lowest risk sessions first
+        sessions_by_risk = active_sessions.order_by('risk_score')
+        sessions_to_terminate = sessions_by_risk[:sessions_by_risk.count() - self.max_concurrent_sessions]
+        
+        for session in sessions_to_terminate:
+            self.terminate_session(
+                session.session_id,
+                reason='concurrent_session_limit_exceeded_lowest_risk'
+            )
+            logger.info(f"Terminated low-risk session {session.session_id} (risk: {session.risk_score}) for user {user.email}")
+    
+    def _terminate_untrusted_device_sessions(self, active_sessions, user: UserProfile) -> None:
+        """
+        Terminate sessions from untrusted devices first to enforce limits.
+        
+        Args:
+            active_sessions: QuerySet of active sessions
+            user: User to enforce limits for
+        """
+        # First try to terminate sessions from untrusted devices
+        untrusted_sessions = active_sessions.filter(is_trusted_device=False).order_by('last_activity')
+        trusted_sessions = active_sessions.filter(is_trusted_device=True).order_by('last_activity')
+        
+        sessions_to_terminate_count = active_sessions.count() - self.max_concurrent_sessions
+        terminated_count = 0
+        
+        # Terminate untrusted device sessions first
+        for session in untrusted_sessions:
+            if terminated_count >= sessions_to_terminate_count:
+                break
             
-            for session in sessions_to_terminate:
+            self.terminate_session(
+                session.session_id,
+                reason='concurrent_session_limit_exceeded_untrusted_device'
+            )
+            logger.info(f"Terminated untrusted device session {session.session_id} for user {user.email}")
+            terminated_count += 1
+        
+        # If we still need to terminate more sessions, terminate oldest trusted sessions
+        if terminated_count < sessions_to_terminate_count:
+            remaining_to_terminate = sessions_to_terminate_count - terminated_count
+            oldest_trusted = trusted_sessions[:remaining_to_terminate]
+            
+            for session in oldest_trusted:
                 self.terminate_session(
                     session.session_id,
-                    reason='concurrent_session_limit_exceeded'
+                    reason='concurrent_session_limit_exceeded_oldest_trusted'
                 )
+                logger.info(f"Terminated oldest trusted session {session.session_id} for user {user.email}")
+    
+    def _detect_and_prevent_session_sharing(self, active_sessions, user: UserProfile) -> None:
+        """
+        Detect and prevent session sharing based on concurrent activity patterns.
+        
+        Args:
+            active_sessions: QuerySet of active sessions
+            user: User to check for session sharing
+        """
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Check for sessions with activity within the sharing threshold window
+        threshold_time = timezone.now() - timedelta(minutes=self.session_sharing_threshold_minutes)
+        
+        recent_active_sessions = active_sessions.filter(
+            last_activity__gte=threshold_time
+        ).select_related('device_info')
+        
+        if recent_active_sessions.count() <= 1:
+            return  # No potential sharing if only one recent session
+        
+        # Group sessions by device fingerprint
+        device_sessions = {}
+        for session in recent_active_sessions:
+            device_fp = session.device_info.device_fingerprint
+            if device_fp not in device_sessions:
+                device_sessions[device_fp] = []
+            device_sessions[device_fp].append(session)
+        
+        # Check for suspicious patterns
+        suspicious_sessions = []
+        
+        for device_fp, sessions in device_sessions.items():
+            if len(sessions) > self.max_concurrent_sessions_per_device:
+                # Too many sessions from same device
+                suspicious_sessions.extend(sessions[self.max_concurrent_sessions_per_device:])
+                logger.warning(
+                    f"Detected {len(sessions)} concurrent sessions from device {device_fp[:8]}... "
+                    f"for user {user.email}"
+                )
+        
+        # Check for impossible concurrent locations
+        location_groups = {}
+        for session in recent_active_sessions:
+            if session.latitude and session.longitude:
+                location_key = f"{session.country}_{session.city}"
+                if location_key not in location_groups:
+                    location_groups[location_key] = []
+                location_groups[location_key].append(session)
+        
+        # If sessions are active from multiple distant locations simultaneously
+        if len(location_groups) > 1:
+            # Calculate distances between locations and flag impossible travel
+            locations = list(location_groups.keys())
+            for i, location1 in enumerate(locations):
+                for location2 in locations[i+1:]:
+                    sessions1 = location_groups[location1]
+                    sessions2 = location_groups[location2]
+                    
+                    # Check if any sessions from these locations are too close in time
+                    for s1 in sessions1:
+                        for s2 in sessions2:
+                            time_diff = abs((s1.last_activity - s2.last_activity).total_seconds())
+                            if time_diff < self.session_sharing_threshold_minutes * 60:
+                                # Flag both sessions as suspicious
+                                if s1 not in suspicious_sessions:
+                                    suspicious_sessions.append(s1)
+                                if s2 not in suspicious_sessions:
+                                    suspicious_sessions.append(s2)
+                                
+                                logger.warning(
+                                    f"Detected concurrent sessions from distant locations for user {user.email}: "
+                                    f"{s1.location_string} and {s2.location_string}"
+                                )
+        
+        # Take action on suspicious sessions
+        for session in suspicious_sessions:
+            # Mark session as suspicious and require re-authentication
+            session.status = 'suspicious'
+            session.risk_score = min(session.risk_score + 30.0, 100.0)  # Increase risk score
+            session.save(update_fields=['status', 'risk_score'])
+            
+            # Log security event
+            self._log_session_activity(
+                session=session,
+                activity_type='suspicious_activity',
+                additional_data={
+                    'reason': 'potential_session_sharing',
+                    'detection_method': 'concurrent_activity_analysis',
+                    'risk_increase': 30.0,
+                }
+            )
+            
+            logger.warning(f"Marked session {session.session_id} as suspicious due to potential sharing")
+    
+    def get_concurrent_session_policy_info(self, user: UserProfile) -> Dict[str, Any]:
+        """
+        Get information about concurrent session policies for a user.
+        
+        Args:
+            user: User to get policy info for
+            
+        Returns:
+            Dictionary containing policy information
+        """
+        active_sessions = UserSession.objects.filter(
+            user=user,
+            status='active'
+        ).count()
+        
+        return {
+            'max_concurrent_sessions': self.max_concurrent_sessions,
+            'current_active_sessions': active_sessions,
+            'sessions_remaining': max(0, self.max_concurrent_sessions - active_sessions),
+            'concurrent_session_policy': self.concurrent_session_policy,
+            'session_sharing_detection_enabled': self.session_sharing_detection_enabled,
+            'session_sharing_threshold_minutes': self.session_sharing_threshold_minutes,
+            'max_concurrent_sessions_per_device': self.max_concurrent_sessions_per_device,
+            'policy_descriptions': {
+                'terminate_oldest': 'Terminates oldest sessions when limit is exceeded',
+                'terminate_lowest_risk': 'Terminates sessions with lowest risk scores first',
+                'terminate_untrusted_devices': 'Terminates sessions from untrusted devices first',
+                'deny_new': 'Prevents new sessions when limit is reached',
+            }
+        }
+    
+    def update_concurrent_session_policy(self, user: UserProfile, policy: str) -> bool:
+        """
+        Update concurrent session policy for a user (if user-specific policies are supported).
+        
+        Args:
+            user: User to update policy for
+            policy: New policy to apply
+            
+        Returns:
+            True if policy was updated successfully
+        """
+        valid_policies = ['terminate_oldest', 'terminate_lowest_risk', 'terminate_untrusted_devices', 'deny_new']
+        
+        if policy not in valid_policies:
+            raise ValueError(f"Invalid policy: {policy}. Must be one of: {valid_policies}")
+        
+        # For now, this is a global setting, but could be extended to support user-specific policies
+        # by storing policy preferences in user profile or a separate model
+        logger.info(f"Concurrent session policy update requested for user {user.email}: {policy}")
+        
+        # This would require extending the UserProfile model or creating a UserSessionPolicy model
+        # For now, we'll just log the request
+        return False  # Not implemented yet - would need database schema changes
     
     def _update_device_trust_status(self, device_info: DeviceInfo, user: UserProfile) -> None:
         """

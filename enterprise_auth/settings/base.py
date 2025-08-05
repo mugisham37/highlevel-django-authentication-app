@@ -204,6 +204,17 @@ SESSION_COOKIE_PATH = '/'
 
 # Advanced session settings
 SESSION_CONCURRENT_LIMIT = config('SESSION_CONCURRENT_LIMIT', default=5, cast=int)
+
+# Concurrent session management policies
+CONCURRENT_SESSION_POLICY = config('CONCURRENT_SESSION_POLICY', default='terminate_oldest')
+SESSION_SHARING_DETECTION_ENABLED = config('SESSION_SHARING_DETECTION_ENABLED', default=True, cast=bool)
+SESSION_SHARING_THRESHOLD_MINUTES = config('SESSION_SHARING_THRESHOLD_MINUTES', default=5, cast=int)
+MAX_CONCURRENT_SESSIONS_PER_DEVICE = config('MAX_CONCURRENT_SESSIONS_PER_DEVICE', default=3, cast=int)
+
+# Session timeout and cleanup settings
+SESSION_TIMEOUT_HOURS = config('SESSION_TIMEOUT_HOURS', default=24, cast=int)
+TRUSTED_DEVICE_THRESHOLD = config('TRUSTED_DEVICE_THRESHOLD', default=0.8, cast=float)
+MAX_CONCURRENT_SESSIONS = SESSION_CONCURRENT_LIMIT  # Alias for backward compatibility
 SESSION_CLEANUP_INTERVAL = config('SESSION_CLEANUP_INTERVAL', default=3600, cast=int)  # 1 hour
 SESSION_METADATA_ENABLED = True
 

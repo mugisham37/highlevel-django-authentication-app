@@ -68,6 +68,11 @@ from .views.session_views import (
     get_current_session,
     admin_get_session_statistics,
     admin_terminate_user_sessions,
+    # Enhanced concurrent session management views
+    get_concurrent_session_policy,
+    terminate_sessions_by_criteria,
+    detect_session_sharing,
+    resolve_session_conflicts,
 )
 
 
@@ -146,6 +151,12 @@ urlpatterns = [
     path('sessions/<str:session_id>/', get_session_details, name='get_session_details'),
     path('sessions/<str:session_id>/terminate/', terminate_session, name='terminate_session'),
     path('sessions/<str:session_id>/activities/', get_session_activities, name='get_session_activities'),
+    
+    # Enhanced concurrent session management endpoints
+    path('sessions/policy/', get_concurrent_session_policy, name='get_concurrent_session_policy'),
+    path('sessions/terminate-by-criteria/', terminate_sessions_by_criteria, name='terminate_sessions_by_criteria'),
+    path('sessions/detect-sharing/', detect_session_sharing, name='detect_session_sharing'),
+    path('sessions/resolve-conflicts/', resolve_session_conflicts, name='resolve_session_conflicts'),
     
     # Admin session management endpoints
     path('admin/sessions/statistics/', admin_get_session_statistics, name='admin_get_session_statistics'),

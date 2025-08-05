@@ -57,6 +57,18 @@ from .views.backup_codes_views import (
     BackupCodesViewSet,
     BackupCodeValidationView,
 )
+from .views.session_views import (
+    list_user_sessions,
+    get_session_details,
+    terminate_session,
+    terminate_all_sessions,
+    extend_current_session,
+    get_session_activities,
+    get_user_session_statistics,
+    get_current_session,
+    admin_get_session_statistics,
+    admin_terminate_user_sessions,
+)
 
 
 app_name = 'core'
@@ -125,7 +137,19 @@ urlpatterns = [
     path('mfa/organization/policy/', get_organization_mfa_policy, name='get_organization_mfa_policy'),
     path('mfa/organization/enforce/', enforce_organization_mfa_policy, name='enforce_organization_mfa_policy'),
     
-
+    # Session management endpoints
+    path('sessions/', list_user_sessions, name='list_user_sessions'),
+    path('sessions/current/', get_current_session, name='get_current_session'),
+    path('sessions/current/extend/', extend_current_session, name='extend_current_session'),
+    path('sessions/statistics/', get_user_session_statistics, name='get_user_session_statistics'),
+    path('sessions/terminate-all/', terminate_all_sessions, name='terminate_all_sessions'),
+    path('sessions/<str:session_id>/', get_session_details, name='get_session_details'),
+    path('sessions/<str:session_id>/terminate/', terminate_session, name='terminate_session'),
+    path('sessions/<str:session_id>/activities/', get_session_activities, name='get_session_activities'),
+    
+    # Admin session management endpoints
+    path('admin/sessions/statistics/', admin_get_session_statistics, name='admin_get_session_statistics'),
+    path('admin/users/<int:user_id>/sessions/terminate/', admin_terminate_user_sessions, name='admin_terminate_user_sessions'),
     
     # SMS MFA endpoints (placeholder - will be implemented in future tasks)
     # path('mfa/sms/', include('enterprise_auth.core.urls.sms_mfa_urls')),

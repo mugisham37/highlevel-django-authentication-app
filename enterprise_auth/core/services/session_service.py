@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Tuple
 
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpRequest
 from django.utils import timezone
 from django.core.cache import cache
@@ -543,6 +544,203 @@ class SessionService:
         ]
         
         cache.delete_many(cache_keys)
+    
+    def cleanup_expired_sessions(self) -> int:
+        """
+        Clean up expired sessions and mark them as expired.
+        
+        Returns:
+            Number of sessions cleaned up
+        """
+        from django.db.models import Q
+        
+        # Find sessions that are expired but not yet marked as such
+        expired_sessions = UserSession.objects.filter(
+            Q(expires_at__lt=timezone.now()) & 
+            Q(status='active')
+        )
+        
+        cleanup_count = 0
+        for session in expired_sessions:
+            session.status = 'expired'
+            session.save(update_fields=['status'])
+            
+            # Log expiration activity
+            self._log_session_activity(
+                session=session,
+                activity_type='logout',
+                additional_data={
+                    'termination_reason': 'session_expired',
+                    'terminated_by': 'system',
+                }
+            )
+            
+            # Clear session from cache
+            self._clear_session_cache(session.session_id)
+            
+            cleanup_count += 1
+        
+        if cleanup_count > 0:
+            logger.info(f"Cleaned up {cleanup_count} expired sessions")
+        
+        return cleanup_count
+    
+    def cleanup_old_sessions(self, days: int = 90) -> int:
+        """
+        Clean up old terminated/expired sessions.
+        
+        Args:
+            days: Number of days to keep sessions
+            
+        Returns:
+            Number of sessions deleted
+        """
+        cutoff_date = timezone.now() - timedelta(days=days)
+        
+        # Delete old terminated and expired sessions
+        old_sessions = UserSession.objects.filter(
+            status__in=['terminated', 'expired'],
+            created_at__lt=cutoff_date
+        )
+        
+        deleted_count = old_sessions.count()
+        old_sessions.delete()
+        
+        if deleted_count > 0:
+            logger.info(f"Deleted {deleted_count} old sessions older than {days} days")
+        
+        return deleted_count
+    
+    def cleanup_old_session_activities(self, days: int = 90) -> int:
+        """
+        Clean up old session activities.
+        
+        Args:
+            days: Number of days to keep activities
+            
+        Returns:
+            Number of activities deleted
+        """
+        cutoff_date = timezone.now() - timedelta(days=days)
+        
+        # Delete old session activities
+        old_activities = SessionActivity.objects.filter(
+            timestamp__lt=cutoff_date
+        )
+        
+        deleted_count = old_activities.count()
+        old_activities.delete()
+        
+        if deleted_count > 0:
+            logger.info(f"Deleted {deleted_count} old session activities older than {days} days")
+        
+        return deleted_count
+    
+    def cleanup_orphaned_device_info(self) -> int:
+        """
+        Clean up device info records that have no associated sessions.
+        
+        Returns:
+            Number of device info records deleted
+        """
+        # Find device info records with no sessions
+        orphaned_devices = DeviceInfo.objects.filter(
+            sessions__isnull=True,
+            last_seen__lt=timezone.now() - timedelta(days=30)
+        )
+        
+        deleted_count = orphaned_devices.count()
+        orphaned_devices.delete()
+        
+        if deleted_count > 0:
+            logger.info(f"Deleted {deleted_count} orphaned device info records")
+        
+        return deleted_count
+    
+    def extend_session_expiration(self, session_id: str, hours: int = 24) -> bool:
+        """
+        Extend session expiration time.
+        
+        Args:
+            session_id: Session ID to extend
+            hours: Number of hours to extend
+            
+        Returns:
+            True if session was extended successfully
+        """
+        try:
+            session = UserSession.objects.get(session_id=session_id, status='active')
+            session.extend_expiration(hours)
+            
+            # Log extension activity
+            self._log_session_activity(
+                session=session,
+                activity_type='session_extended',
+                additional_data={
+                    'extended_hours': hours,
+                    'new_expiration': session.expires_at.isoformat(),
+                }
+            )
+            
+            logger.info(f"Extended session {session_id} by {hours} hours")
+            return True
+            
+        except UserSession.DoesNotExist:
+            return False
+    
+    def get_session_statistics(self, user: Optional[UserProfile] = None) -> Dict[str, Any]:
+        """
+        Get session statistics.
+        
+        Args:
+            user: Optional user to get statistics for (if None, get global stats)
+            
+        Returns:
+            Dictionary containing session statistics
+        """
+        from django.db.models import Count, Avg
+        
+        sessions_query = UserSession.objects.all()
+        if user:
+            sessions_query = sessions_query.filter(user=user)
+        
+        # Basic counts
+        stats = {
+            'total_sessions': sessions_query.count(),
+            'active_sessions': sessions_query.filter(status='active').count(),
+            'expired_sessions': sessions_query.filter(status='expired').count(),
+            'terminated_sessions': sessions_query.filter(status='terminated').count(),
+            'suspicious_sessions': sessions_query.filter(status='suspicious').count(),
+        }
+        
+        # Risk statistics
+        risk_stats = sessions_query.aggregate(
+            avg_risk_score=Avg('risk_score'),
+            high_risk_sessions=Count('id', filter=Q(risk_score__gte=70.0)),
+            medium_risk_sessions=Count('id', filter=Q(risk_score__gte=40.0, risk_score__lt=70.0)),
+            low_risk_sessions=Count('id', filter=Q(risk_score__lt=40.0)),
+        )
+        stats.update(risk_stats)
+        
+        # Device statistics
+        device_stats = sessions_query.values('device_info__device_type').annotate(
+            count=Count('id')
+        ).order_by('-count')
+        stats['device_types'] = list(device_stats)
+        
+        # Geographic statistics
+        geo_stats = sessions_query.exclude(country='').values('country').annotate(
+            count=Count('id')
+        ).order_by('-count')[:10]
+        stats['top_countries'] = list(geo_stats)
+        
+        # Recent activity
+        recent_sessions = sessions_query.filter(
+            created_at__gte=timezone.now() - timedelta(hours=24)
+        ).count()
+        stats['sessions_last_24h'] = recent_sessions
+        
+        return stats
 
 
 # Convenience functions for common operations
@@ -594,3 +792,82 @@ def terminate_user_session(session_id: str, terminated_by: Optional[UserProfile]
     """
     service = SessionService()
     return service.terminate_session(session_id, terminated_by, reason)
+
+
+def cleanup_expired_sessions() -> int:
+    """
+    Convenience function to cleanup expired sessions.
+    
+    Returns:
+        Number of sessions cleaned up
+    """
+    service = SessionService()
+    return service.cleanup_expired_sessions()
+
+
+def cleanup_old_sessions(days: int = 90) -> int:
+    """
+    Convenience function to cleanup old sessions.
+    
+    Args:
+        days: Number of days to keep sessions
+        
+    Returns:
+        Number of sessions deleted
+    """
+    service = SessionService()
+    return service.cleanup_old_sessions(days)
+
+
+def cleanup_old_session_activities(days: int = 90) -> int:
+    """
+    Convenience function to cleanup old session activities.
+    
+    Args:
+        days: Number of days to keep activities
+        
+    Returns:
+        Number of activities cleaned up
+    """
+    service = SessionService()
+    return service.cleanup_old_session_activities(days)
+
+
+def cleanup_orphaned_device_info() -> int:
+    """
+    Convenience function to cleanup orphaned device info records.
+    
+    Returns:
+        Number of device info records deleted
+    """
+    service = SessionService()
+    return service.cleanup_orphaned_device_info()
+
+
+def extend_session_expiration(session_id: str, hours: int = 24) -> bool:
+    """
+    Convenience function to extend session expiration.
+    
+    Args:
+        session_id: Session ID to extend
+        hours: Number of hours to extend
+        
+    Returns:
+        True if extended successfully
+    """
+    service = SessionService()
+    return service.extend_session_expiration(session_id, hours)
+
+
+def get_session_statistics(user: Optional[UserProfile] = None) -> Dict[str, Any]:
+    """
+    Convenience function to get session statistics.
+    
+    Args:
+        user: Optional user to get statistics for
+        
+    Returns:
+        Dictionary containing session statistics
+    """
+    service = SessionService()
+    return service.get_session_statistics(user)

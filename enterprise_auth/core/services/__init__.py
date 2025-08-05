@@ -58,6 +58,18 @@ from .mfa_device_management_service import (
     MFADeviceManagementService,
     mfa_device_management_service,
 )
+from .session_service import (
+    SessionService,
+    create_user_session,
+    validate_user_session,
+    terminate_user_session,
+    cleanup_expired_sessions,
+    cleanup_old_sessions,
+    cleanup_old_session_activities,
+    cleanup_orphaned_device_info,
+    extend_session_expiration,
+    get_session_statistics,
+)
 
 __all__ = [
     'PasswordService',
@@ -106,4 +118,15 @@ __all__ = [
     # MFA device management service
     'MFADeviceManagementService',
     'mfa_device_management_service',
+    # Session management service
+    'SessionService',
+    'create_user_session',
+    'validate_user_session',
+    'terminate_user_session',
+    'cleanup_expired_sessions',
+    'cleanup_old_sessions',
+    'cleanup_old_session_activities',
+    'cleanup_orphaned_device_info',
+    'extend_session_expiration',
+    'get_session_statistics',
 ]

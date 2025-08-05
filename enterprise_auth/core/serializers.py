@@ -15,6 +15,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
 from .models import UserProfile, UserIdentity, AuditLog, ProfileChangeHistory
+from .models.session import UserSession, DeviceInfo, SessionActivity
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -1362,3 +1363,233 @@ class BackupCodesGenerationResponseSerializer(serializers.Serializer):
         required=False,
         help_text="Reason for regeneration (for regeneration operations)"
     )
+
+
+class DeviceInfoSerializer(serializers.ModelSerializer):
+    """
+    Serializer for device information.
+    
+    Provides device details for session tracking and security analysis.
+    """
+    
+    class Meta:
+        model = DeviceInfo
+        fields = [
+            'id',
+            'device_fingerprint',
+            'device_type',
+            'browser',
+            'operating_system',
+            'screen_resolution',
+            'timezone_offset',
+            'language',
+            'is_trusted',
+            'first_seen',
+            'last_seen',
+        ]
+        read_only_fields = ['id', 'device_fingerprint', 'first_seen', 'last_seen']
+
+
+class UserSessionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for user session information.
+    
+    Provides comprehensive session details including device info,
+    location data, and security metrics.
+    """
+    
+    device_info = DeviceInfoSerializer(read_only=True)
+    location_string = serializers.CharField(read_only=True)
+    is_active = serializers.BooleanField(read_only=True)
+    is_expired = serializers.BooleanField(read_only=True)
+    duration = serializers.DurationField(read_only=True)
+    
+    class Meta:
+        model = UserSession
+        fields = [
+            'id',
+            'session_id',
+            'device_info',
+            'ip_address',
+            'country',
+            'region',
+            'city',
+            'location_string',
+            'status',
+            'login_method',
+            'risk_score',
+            'risk_factors',
+            'is_trusted_device',
+            'is_active',
+            'is_expired',
+            'duration',
+            'created_at',
+            'last_activity',
+            'expires_at',
+            'terminated_at',
+            'termination_reason',
+        ]
+        read_only_fields = [
+            'id',
+            'session_id',
+            'device_info',
+            'ip_address',
+            'country',
+            'region',
+            'city',
+            'location_string',
+            'status',
+            'login_method',
+            'risk_score',
+            'risk_factors',
+            'is_trusted_device',
+            'is_active',
+            'is_expired',
+            'duration',
+            'created_at',
+            'last_activity',
+            'expires_at',
+            'terminated_at',
+            'termination_reason',
+        ]
+
+
+class SessionActivitySerializer(serializers.ModelSerializer):
+    """
+    Serializer for session activity information.
+    
+    Provides detailed activity logs for session forensics and analysis.
+    """
+    
+    class Meta:
+        model = SessionActivity
+        fields = [
+            'id',
+            'activity_type',
+            'endpoint',
+            'method',
+            'status_code',
+            'response_time_ms',
+            'user_agent',
+            'ip_address',
+            'activity_data',
+            'risk_indicators',
+            'timestamp',
+        ]
+        read_only_fields = [
+            'id',
+            'activity_type',
+            'endpoint',
+            'method',
+            'status_code',
+            'response_time_ms',
+            'user_agent',
+            'ip_address',
+            'activity_data',
+            'risk_indicators',
+            'timestamp',
+        ]
+
+
+class SessionTerminationSerializer(serializers.Serializer):
+    """
+    Serializer for session termination requests.
+    """
+    
+    reason = serializers.CharField(
+        max_length=200,
+        required=False,
+        help_text="Optional reason for session termination"
+    )
+
+
+class SessionExtensionSerializer(serializers.Serializer):
+    """
+    Serializer for session extension requests.
+    """
+    
+    hours = serializers.IntegerField(
+        min_value=1,
+        max_value=168,  # Max 1 week
+        default=24,
+        help_text="Number of hours to extend session (1-168)"
+    )
+
+
+class SessionStatisticsSerializer(serializers.Serializer):
+    """
+    Serializer for session statistics data.
+    """
+    
+    total_sessions = serializers.IntegerField()
+    active_sessions = serializers.IntegerField()
+    expired_sessions = serializers.IntegerField()
+    terminated_sessions = serializers.IntegerField()
+    suspicious_sessions = serializers.IntegerField()
+    sessions_last_24h = serializers.IntegerField()
+    avg_risk_score = serializers.FloatField(allow_null=True)
+    high_risk_sessions = serializers.IntegerField()
+    medium_risk_sessions = serializers.IntegerField()
+    low_risk_sessions = serializers.IntegerField()
+    
+    device_types = serializers.ListField(
+        child=serializers.DictField(),
+        required=False
+    )
+    top_countries = serializers.ListField(
+        child=serializers.DictField(),
+        required=False
+    )
+
+
+class SessionRiskAnalysisSerializer(serializers.Serializer):
+    """
+    Serializer for session risk analysis data.
+    """
+    
+    current_risk_score = serializers.FloatField()
+    risk_level = serializers.CharField()
+    risk_factors = serializers.DictField()
+    
+    location_anomaly = serializers.DictField()
+    concurrent_sessions = serializers.IntegerField()
+    device_trust_score = serializers.FloatField()
+    recommendations = serializers.ListField(child=serializers.CharField())
+
+
+class SessionListResponseSerializer(serializers.Serializer):
+    """
+    Serializer for session list API responses.
+    """
+    
+    sessions = UserSessionSerializer(many=True)
+    pagination = serializers.DictField()
+
+
+class SessionActivitiesResponseSerializer(serializers.Serializer):
+    """
+    Serializer for session activities API responses.
+    """
+    
+    activities = SessionActivitySerializer(many=True)
+    pagination = serializers.DictField()
+
+
+class SessionTerminationResponseSerializer(serializers.Serializer):
+    """
+    Serializer for session termination API responses.
+    """
+    
+    message = serializers.CharField()
+    session_id = serializers.CharField()
+    terminated_count = serializers.IntegerField(required=False)
+
+
+class SessionExtensionResponseSerializer(serializers.Serializer):
+    """
+    Serializer for session extension API responses.
+    """
+    
+    message = serializers.CharField()
+    new_expiration = serializers.DateTimeField()
+    hours_extended = serializers.IntegerField()

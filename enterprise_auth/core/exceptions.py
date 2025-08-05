@@ -774,3 +774,97 @@ class ConfigurationError(EnterpriseAuthError):
             details['config_key'] = config_key
         kwargs['details'] = details
         super().__init__(message, error_code="CONFIGURATION_ERROR", **kwargs)
+# Session Management Exceptions
+
+class SessionError(EnterpriseAuthError):
+    """Base exception for session-related errors."""
+    pass
+
+
+class SessionNotFoundError(SessionError):
+    """Exception raised when a session is not found."""
+    
+    def __init__(self, session_id: str, correlation_id: Optional[str] = None):
+        super().__init__(
+            message=f"Session not found: {session_id}",
+            error_code="SESSION_NOT_FOUND",
+            details={"session_id": session_id},
+            correlation_id=correlation_id
+        )
+
+
+class SessionInvalidError(SessionError):
+    """Exception raised when a session is invalid."""
+    
+    def __init__(self, session_id: str, reason: str, correlation_id: Optional[str] = None):
+        super().__init__(
+            message=f"Session invalid: {reason}",
+            error_code="SESSION_INVALID",
+            details={"session_id": session_id, "reason": reason},
+            correlation_id=correlation_id
+        )
+
+
+class SessionExpiredError(SessionError):
+    """Exception raised when a session has expired."""
+    
+    def __init__(self, session_id: str, expired_at: str, correlation_id: Optional[str] = None):
+        super().__init__(
+            message="Session has expired",
+            error_code="SESSION_EXPIRED",
+            details={"session_id": session_id, "expired_at": expired_at},
+            correlation_id=correlation_id
+        )
+
+
+class SessionTerminatedError(SessionError):
+    """Exception raised when a session has been terminated."""
+    
+    def __init__(self, session_id: str, reason: str, correlation_id: Optional[str] = None):
+        super().__init__(
+            message="Session has been terminated",
+            error_code="SESSION_TERMINATED",
+            details={"session_id": session_id, "reason": reason},
+            correlation_id=correlation_id
+        )
+
+
+class SessionLimitExceededError(SessionError):
+    """Exception raised when session limits are exceeded."""
+    
+    def __init__(self, user_id: str, limit: int, correlation_id: Optional[str] = None):
+        super().__init__(
+            message=f"Session limit exceeded: maximum {limit} concurrent sessions allowed",
+            error_code="SESSION_LIMIT_EXCEEDED",
+            details={"user_id": user_id, "limit": limit},
+            correlation_id=correlation_id
+        )
+
+
+class DeviceFingerprintError(SessionError):
+    """Exception raised when device fingerprinting fails."""
+    
+    def __init__(self, reason: str, correlation_id: Optional[str] = None):
+        super().__init__(
+            message=f"Device fingerprinting failed: {reason}",
+            error_code="DEVICE_FINGERPRINT_ERROR",
+            details={"reason": reason},
+            correlation_id=correlation_id
+        )
+
+
+class SessionSecurityError(SessionError):
+    """Exception raised for session security violations."""
+    
+    def __init__(self, session_id: str, violation_type: str, 
+                 risk_score: float, correlation_id: Optional[str] = None):
+        super().__init__(
+            message=f"Session security violation: {violation_type}",
+            error_code="SESSION_SECURITY_VIOLATION",
+            details={
+                "session_id": session_id,
+                "violation_type": violation_type,
+                "risk_score": risk_score
+            },
+            correlation_id=correlation_id
+        )

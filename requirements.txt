@@ -35,6 +35,11 @@ structlog==23.2.0
 python-json-logger==2.0.7
 sentry-sdk==1.38.0
 
+# API and documentation
+djangorestframework==3.14.0
+drf-spectacular==0.26.5
+django-filter==23.3
+
 # Development dependencies
 django-extensions==3.2.3
 django-debug-toolbar==4.2.0

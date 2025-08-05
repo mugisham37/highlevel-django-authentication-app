@@ -74,6 +74,23 @@ from .views.session_views import (
     detect_session_sharing,
     resolve_session_conflicts,
 )
+from .views.rbac_views import (
+    # Role management
+    roles_list_create,
+    role_detail,
+    role_hierarchy,
+    # Permission management
+    permissions_list_create,
+    permission_detail,
+    # Role assignment
+    assign_role_to_user,
+    revoke_role_from_user,
+    bulk_assign_roles,
+    # User roles
+    user_roles,
+    # Audit and reporting
+    permission_audit_log,
+)
 
 
 app_name = 'core'
@@ -173,6 +190,18 @@ urlpatterns = [
     
     # Session security monitoring endpoints (will be added after migrations)
     # path('security/sessions/monitor/', monitor_session, name='monitor_session'),
+    
+    # RBAC endpoints - imported directly to avoid circular imports
+    path('rbac/roles/', roles_list_create, name='rbac_roles_list_create'),
+    path('rbac/roles/<uuid:role_id>/', role_detail, name='rbac_role_detail'),
+    path('rbac/roles/<uuid:role_id>/hierarchy/', role_hierarchy, name='rbac_role_hierarchy'),
+    path('rbac/permissions/', permissions_list_create, name='rbac_permissions_list_create'),
+    path('rbac/permissions/<uuid:permission_id>/', permission_detail, name='rbac_permission_detail'),
+    path('rbac/assign-role/', assign_role_to_user, name='rbac_assign_role'),
+    path('rbac/revoke-role/', revoke_role_from_user, name='rbac_revoke_role'),
+    path('rbac/bulk-assign-roles/', bulk_assign_roles, name='rbac_bulk_assign_roles'),
+    path('rbac/users/<uuid:user_id>/roles/', user_roles, name='rbac_user_roles'),
+    path('rbac/audit-log/', permission_audit_log, name='rbac_audit_log'),
     
     # Include router URLs for viewsets
     path('', include(router.urls)),

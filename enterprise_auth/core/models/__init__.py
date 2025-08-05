@@ -9,6 +9,7 @@ from .jwt import RefreshToken, TokenBlacklist, JWTKeyRotation
 from .mfa import MFADevice, MFAAttempt
 from .session import UserSession, DeviceInfo, SessionActivity
 from .security import SecurityEvent, SessionSecurityEvent, ThreatIntelligence
+from .rbac import Role, Permission, UserRole, RolePermission, PermissionAuditLog
 
 __all__ = [
     'BaseModel',
@@ -30,4 +31,9 @@ __all__ = [
     'SecurityEvent',
     'SessionSecurityEvent',
     'ThreatIntelligence',
+    'Role',
+    'Permission',
+    'UserRole',
+    'RolePermission',
+    'PermissionAuditLog',
 ]

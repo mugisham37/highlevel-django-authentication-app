@@ -88,11 +88,11 @@ urlpatterns = [
     # Core functionality endpoints
     path('api/v1/core/', include('enterprise_auth.core.urls')),
     
-    # API integration endpoints
-    path('api/v1/', include('enterprise_auth.api.urls')),
+    # API integration endpoints (temporarily disabled)
+    # path('api/v1/', include('enterprise_auth.api.urls')),
     
-    # Monitoring and observability endpoints
-    path('monitoring/', include('enterprise_auth.core.monitoring.urls')),
+    # Monitoring and observability endpoints (temporarily disabled)
+    # path('monitoring/', include('enterprise_auth.core.monitoring.urls')),
 ]
 
 # Serve static and media files in development

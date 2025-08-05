@@ -10,6 +10,11 @@ from .mfa import MFADevice, MFAAttempt
 from .session import UserSession, DeviceInfo, SessionActivity
 from .security import SecurityEvent, SessionSecurityEvent, ThreatIntelligence
 from .rbac import Role, Permission, UserRole, RolePermission, PermissionAuditLog
+from .compliance import (
+    DataProcessingPurpose, ConsentRecord, DataExportRequest, DataDeletionRequest,
+    DataDisclosureLog, PrivacyPolicyVersion, PrivacyPolicyAcceptance,
+    ComplianceAuditLog, SecurityVulnerability, ComplianceReport
+)
 
 __all__ = [
     'BaseModel',
@@ -36,4 +41,14 @@ __all__ = [
     'UserRole',
     'RolePermission',
     'PermissionAuditLog',
+    'DataProcessingPurpose',
+    'ConsentRecord',
+    'DataExportRequest',
+    'DataDeletionRequest',
+    'DataDisclosureLog',
+    'PrivacyPolicyVersion',
+    'PrivacyPolicyAcceptance',
+    'ComplianceAuditLog',
+    'SecurityVulnerability',
+    'ComplianceReport',
 ]

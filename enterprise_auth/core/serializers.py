@@ -1593,3 +1593,137 @@ class SessionExtensionResponseSerializer(serializers.Serializer):
     message = serializers.CharField()
     new_expiration = serializers.DateTimeField()
     hours_extended = serializers.IntegerField()
+
+
+class UserSessionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for user session information.
+    """
+    
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    is_current = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = UserSession
+        fields = [
+            'id',
+            'session_id',
+            'user_email',
+            'device_fingerprint',
+            'user_agent',
+            'ip_address',
+            'device_type',
+            'browser',
+            'operating_system',
+            'country',
+            'city',
+            'status',
+            'risk_score',
+            'is_trusted_device',
+            'is_current',
+            'created_at',
+            'last_activity',
+            'expires_at',
+        ]
+        read_only_fields = [
+            'id',
+            'session_id',
+            'user_email',
+            'device_fingerprint',
+            'user_agent',
+            'ip_address',
+            'device_type',
+            'browser',
+            'operating_system',
+            'country',
+            'city',
+            'status',
+            'risk_score',
+            'is_trusted_device',
+            'is_current',
+            'created_at',
+            'last_activity',
+            'expires_at',
+        ]
+    
+    def get_is_current(self, obj):
+        """Check if this is the current session."""
+        request = self.context.get('request')
+        if request and hasattr(request, 'session'):
+            return obj.session_id == request.session.session_key
+        return False
+
+
+class SessionActivitySerializer(serializers.ModelSerializer):
+    """
+    Serializer for session activity information.
+    """
+    
+    class Meta:
+        model = SessionActivity
+        fields = [
+            'id',
+            'activity_type',
+            'description',
+            'ip_address',
+            'user_agent',
+            'location',
+            'metadata',
+            'timestamp',
+        ]
+        read_only_fields = [
+            'id',
+            'activity_type',
+            'description',
+            'ip_address',
+            'user_agent',
+            'location',
+            'metadata',
+            'timestamp',
+        ]
+
+
+class DeviceInfoSerializer(serializers.ModelSerializer):
+    """
+    Serializer for device information.
+    """
+    
+    class Meta:
+        model = DeviceInfo
+        fields = [
+            'id',
+            'device_fingerprint',
+            'device_type',
+            'browser',
+            'browser_version',
+            'operating_system',
+            'os_version',
+            'screen_resolution',
+            'timezone',
+            'language',
+            'is_trusted',
+            'first_seen',
+            'last_seen',
+        ]
+        read_only_fields = [
+            'id',
+            'device_fingerprint',
+            'device_type',
+            'browser',
+            'browser_version',
+            'operating_system',
+            'os_version',
+            'screen_resolution',
+            'timezone',
+            'language',
+            'is_trusted',
+            'first_seen',
+            'last_seen',
+        ]
+
+# Compliance serializers placeholder
+class ComplianceSerializer:
+    """
+    Container class for all compliance serializers.
+    """
+    pass

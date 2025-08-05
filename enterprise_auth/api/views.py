@@ -15,8 +15,8 @@ from rest_framework.response import Response
 from rest_framework.request import Request
 from rest_framework.views import APIView
 from rest_framework.pagination import PageNumberPagination
-from drf_spectacular.utils import extend_schema, OpenApiParameter
-from drf_spectacular.openapi import AutoSchema
+# from drf_spectacular.utils import extend_schema, OpenApiParameter
+# from drf_spectacular.openapi import AutoSchema
 
 from .models import (
     APIKey, WebhookEndpoint, WebhookDelivery, APIRequestLog,

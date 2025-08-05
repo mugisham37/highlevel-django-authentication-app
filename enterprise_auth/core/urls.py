@@ -206,8 +206,11 @@ urlpatterns = [
     path('rbac/users/<uuid:user_id>/roles/', user_roles, name='rbac_user_roles'),
     path('rbac/audit-log/', permission_audit_log, name='rbac_audit_log'),
     
-    # Performance monitoring endpoints
-    path('performance/', include('enterprise_auth.core.urls.performance')),
+    # Performance monitoring endpoints (temporarily disabled)
+    # path('performance/', include('enterprise_auth.core.urls.performance')),
+    
+    # Compliance and privacy rights endpoints (temporarily disabled)
+    # path('compliance/', include('enterprise_auth.core.urls.compliance_urls')),
     
     # Include router URLs for viewsets
     path('', include(router.urls)),

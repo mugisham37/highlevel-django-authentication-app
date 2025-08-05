@@ -310,3 +310,37 @@ def verify_sensitive_hash(data: Union[str, bytes], hashed_data: str) -> bool:
         True if data matches hash
     """
     return HashingService.verify_hash(data, hashed_data)
+
+# Global encryption service instance
+_encryption_service = None
+
+def get_encryption_service() -> EncryptionService:
+    """Get the global encryption service instance."""
+    global _encryption_service
+    if _encryption_service is None:
+        _encryption_service = EncryptionService()
+    return _encryption_service
+
+def encrypt_data(data: str) -> str:
+    """
+    Encrypt data using the global encryption service.
+    
+    Args:
+        data: Data to encrypt
+        
+    Returns:
+        Encrypted data as base64 string
+    """
+    return get_encryption_service().encrypt(data)
+
+def decrypt_data(encrypted_data: str) -> str:
+    """
+    Decrypt data using the global encryption service.
+    
+    Args:
+        encrypted_data: Encrypted data as base64 string
+        
+    Returns:
+        Decrypted data
+    """
+    return get_encryption_service().decrypt(encrypted_data)

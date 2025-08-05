@@ -76,6 +76,16 @@ from .session_security_service import (
     AnomalyScore,
     ThreatAnalysis,
 )
+from .compliance_service import (
+    GDPRComplianceService,
+    CCPAComplianceService,
+    SOC2AuditService,
+)
+from .data_portability_service import DataPortabilityService
+from .privacy_rights_service import PrivacyRightsService
+from .security_compliance_service import SecurityComplianceService
+from .audit_integrity_service import AuditIntegrityService
+from .compliance_dashboard_service import ComplianceDashboardService
 
 __all__ = [
     'PasswordService',
@@ -140,4 +150,13 @@ __all__ = [
     'session_security_service',
     'AnomalyScore',
     'ThreatAnalysis',
+    # Compliance services
+    'GDPRComplianceService',
+    'CCPAComplianceService',
+    'SOC2AuditService',
+    'DataPortabilityService',
+    'PrivacyRightsService',
+    'SecurityComplianceService',
+    'AuditIntegrityService',
+    'ComplianceDashboardService',
 ]

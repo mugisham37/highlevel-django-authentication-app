@@ -14,10 +14,18 @@ INSTALLED_APPS += [
     'debug_toolbar',
 ]
 
-# Development middleware
+# Development middleware - override base middleware to remove problematic monitoring
 MIDDLEWARE = [
     'debug_toolbar.middleware.DebugToolbarMiddleware',
-] + MIDDLEWARE
+    'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+]
 
 # Debug toolbar configuration
 INTERNAL_IPS = [

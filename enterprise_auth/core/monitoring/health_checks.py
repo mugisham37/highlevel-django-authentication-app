@@ -14,7 +14,14 @@ from django.core.cache import cache, caches
 from django.db import connections, connection
 from django.utils import timezone
 import redis
-import psycopg
+
+# Conditional PostgreSQL import for development environment
+try:
+    import psycopg
+    PSYCOPG_AVAILABLE = True
+except ImportError:
+    PSYCOPG_AVAILABLE = False
+
 from .logging_config import get_structured_logger
 
 logger = get_structured_logger(__name__)

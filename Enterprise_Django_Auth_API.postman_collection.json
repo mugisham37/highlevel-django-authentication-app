@@ -1,0 +1,391 @@
+{
+  "info": {
+    "name": "Enterprise Django Auth API",
+    "description": "Comprehensive testing collection for Enterprise Django Authentication API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health Checks",
+      "item": [
+        {
+          "name": "Basic Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/",
+              "host": ["{{base_url}}"],
+              "path": ["health", ""]
+            }
+          }
+        },
+        {
+          "name": "Readiness Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/ready/",
+              "host": ["{{base_url}}"],
+              "path": ["ready", ""]
+            }
+          }
+        },
+        {
+          "name": "Redis Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/health/redis/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "health", "redis", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    pm.environment.set('access_token', response.access_token);",
+                  "    pm.environment.set('refresh_token', response.refresh_token);",
+                  "    pm.environment.set('user_id', response.user.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"email\": \"admin@example.com\",\n    \"password\": \"admin123\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/auth/login/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "auth", "login", ""]
+            }
+          }
+        },
+        {
+          "name": "Get User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/auth/profile/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "auth", "profile", ""]
+            }
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/auth/refresh/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "auth", "refresh", ""]
+            }
+          }
+        },
+        {
+          "name": "Validate Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"token\": \"{{access_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/auth/validate/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "auth", "validate", ""]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/auth/logout/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "auth", "logout", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Multi-Factor Authentication",
+      "item": [
+        {
+          "name": "MFA Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/mfa/status/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "mfa", "status", ""]
+            }
+          }
+        },
+        {
+          "name": "Setup TOTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"device_name\": \"My Phone\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/mfa/setup/totp/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "mfa", "setup", "totp", ""]
+            }
+          }
+        },
+        {
+          "name": "List MFA Devices",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/mfa/devices/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "mfa", "devices", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Session Management",
+      "item": [
+        {
+          "name": "List Sessions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/sessions/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "sessions", ""]
+            }
+          }
+        },
+        {
+          "name": "Get Current Session",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/sessions/current/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "sessions", "current", ""]
+            }
+          }
+        },
+        {
+          "name": "Session Statistics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/sessions/statistics/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "sessions", "statistics", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "OAuth Integration",
+      "item": [
+        {
+          "name": "List OAuth Providers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/oauth/providers/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "oauth", "providers", ""]
+            }
+          }
+        },
+        {
+          "name": "OAuth Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/oauth/health/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "oauth", "health", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "RBAC (Role-Based Access Control)",
+      "item": [
+        {
+          "name": "List Roles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/rbac/roles/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "rbac", "roles", ""]
+            }
+          }
+        },
+        {
+          "name": "List Permissions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{access_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/core/rbac/permissions/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "core", "rbac", "permissions", ""]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
